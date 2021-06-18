@@ -10,6 +10,7 @@ type HandleMap<T> = Option<HashMap<u64, Rc<RefCell<T>>>>;
 
 //TODO thread safety
 pub static mut INSTANCES: HandleMap<Instance> = None;
+pub static mut SESSIONS: HandleMap<Session> = None;
 pub static mut ACTIONS: HandleMap<Action> = None;
 pub static mut ACTION_SETS: HandleMap<ActionSet> = None;
 
@@ -22,10 +23,18 @@ pub struct Instance {
     pub engine_name: String,
     pub engine_version: u32,
 
+    pub create_session: pfn::CreateSession,
     pub create_action_set: pfn::CreateActionSet,
     pub create_action: pfn::CreateAction,
+    pub attach_session_action_sets: pfn::AttachSessionActionSets,
     pub suggest_interaction_profile_bindings: pfn::SuggestInteractionProfileBindings,
     pub path_to_string: pfn::PathToString,
+}
+
+#[derive(Debug)]
+pub struct Session {
+    pub handle: xr::Session,
+    pub instance: Weak<RefCell<Instance>>,
 }
 
 #[derive(Debug)]
@@ -60,6 +69,17 @@ impl std::fmt::Debug for Instance {
 }
 
 impl Instance {
+    #[inline]
+    pub fn create_session(
+        &self,
+        create_info: *const xr::SessionCreateInfo, 
+        session: *mut xr::Session
+    ) -> xr::Result {
+        unsafe {
+            (self.create_session)(self.handle, create_info, session)
+        }
+    }
+
     #[inline]
     pub fn create_action_set(
         &self,
@@ -110,6 +130,29 @@ impl Instance {
     pub fn from_handle(handle: xr::Instance) -> &'static Rc<RefCell<Instance>> {
         unsafe {
             INSTANCES.as_ref().unwrap().get(&handle.into_raw()).unwrap()
+        }
+    }
+}
+
+impl Session {
+    #[inline]
+    pub fn attach_session_action_sets(
+        &self,
+        attach_info: *const xr::SessionActionSetsAttachInfo,
+    ) -> xr::Result {
+        unsafe {
+            (self.instance().try_borrow().unwrap().attach_session_action_sets)(self.handle, attach_info)
+        }
+    }
+
+    #[inline]
+    pub fn instance(&self) -> Rc<RefCell<Instance>> {
+        self.instance.upgrade().unwrap().clone()
+    }
+
+    pub fn from_handle(handle: xr::Session) -> &'static Rc<RefCell<Session>> {
+        unsafe {
+            SESSIONS.as_ref().unwrap().get(&handle.into_raw()).unwrap()
         }
     }
 }

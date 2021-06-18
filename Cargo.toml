@@ -1,5 +1,5 @@
 [package]
-name = "openxr-runtime-wrapper"
+name = "openxr-bindings-customizer"
 version = "0.1.0"
 authors = ["sorenon <sorenonandstuffs@gmail.com>"]
 edition = "2018"
@@ -14,6 +14,7 @@ bench = false
 openxr-sys = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+uuid = { version = "0.8", features = ["v4"] }
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["libloaderapi"] }
