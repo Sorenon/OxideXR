@@ -1,13 +1,15 @@
-mod xr_loader_interfaces;
+mod loader_interfaces;
 mod xr_meta_types;
 mod serial;
 
 use xr_meta_types::*;
-use xr_loader_interfaces::*;
+use loader_interfaces::*;
 
 use openxr_sys as xr;
 use openxr_sys::pfn as pfn;
 
+use std::borrow::Borrow;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::os::raw::c_char;
 use std::ffi::CStr;
@@ -111,7 +113,7 @@ unsafe extern "system" fn create_instance(
         path_to_string: std::mem::transmute(get_func(*instance, "xrPathToString").unwrap()),
     };
 
-    INSTANCES.as_mut().unwrap().insert((*instance).into_raw(), Rc::new(meta));
+    INSTANCES.as_mut().unwrap().insert((*instance).into_raw(), Rc::new(RefCell::new(meta)));
 
     result
 }
@@ -121,8 +123,8 @@ unsafe extern "system" fn create_action_set(
     create_info: *const xr::ActionSetCreateInfo, 
     action_set: *mut xr::ActionSet
 ) -> xr::Result {
-    let instance = to_meta(instance);
-    let result = instance.create_action_set(create_info, action_set);
+    let instance = Instance::from_handle(instance);
+    let result = instance.try_borrow().unwrap().create_action_set(create_info, action_set);
 
     if result.into_raw() < 0 { return result; }
 
@@ -130,14 +132,14 @@ unsafe extern "system" fn create_action_set(
 
     let meta = ActionSet {
         handle: *action_set,
-        instance,
+        instance: Rc::downgrade(instance),
         actions: Vec::new(),
         name: i8_arr_to_owned(&create_info.action_set_name),
         localized_name: i8_arr_to_owned(&create_info.localized_action_set_name),
         priority: create_info.priority
     };
 
-    ACTION_SETS.as_mut().unwrap().insert((*action_set).into_raw(), Rc::new(meta)).unwrap().clone();
+    ACTION_SETS.as_mut().unwrap().insert((*action_set).into_raw(), Rc::new(RefCell::new(meta)));
 
     result
 }
@@ -147,9 +149,10 @@ unsafe extern "system" fn create_action(
     create_info: *const xr::ActionCreateInfo, 
     action: *mut xr::Action
 ) -> xr::Result {
-    let action_set = ACTION_SETS.as_ref().unwrap().get(&action_set.into_raw()).unwrap().clone();
+    let action_set_rc = ActionSet::from_handle(action_set);
+    let action_set = action_set_rc.try_borrow().unwrap();
 
-    let result = action_set.instance.create_action(action_set.handle, create_info, action);
+    let result = action_set.create_action(create_info, action);
     
     if result.into_raw() < 0 { return result; }
 
@@ -157,14 +160,14 @@ unsafe extern "system" fn create_action(
 
     let meta = Action {
         handle: *action,
-        action_set,
+        action_set: Rc::downgrade(action_set_rc),
         name: i8_arr_to_owned(&create_info.action_name),
         action_type: create_info.action_type,
         subaction_paths: std::slice::from_raw_parts(create_info.subaction_paths, create_info.count_subaction_paths as usize).to_owned(),
         localized_name: i8_arr_to_owned(&create_info.localized_action_name)
     };
 
-    ACTIONS.as_mut().unwrap().insert((*action).into_raw(), Rc::new(meta)).unwrap();
+    ACTIONS.as_mut().unwrap().insert((*action).into_raw(), Rc::new(RefCell::new(meta))).unwrap();
     
     result
 }
@@ -173,7 +176,7 @@ unsafe extern "system" fn suggest_interaction_profile_bindings(
     instance: xr::Instance, 
     suggested_bindings_ptr: *const xr::InteractionProfileSuggestedBinding
 ) -> xr::Result {
-    let instance = to_meta(instance);
+    let instance = Instance::from_handle(instance).try_borrow().unwrap();
     
     let suggested_bindings = *suggested_bindings_ptr;
 
@@ -188,12 +191,13 @@ unsafe extern "system" fn suggest_interaction_profile_bindings(
         let result = instance.path_to_string(suggested_binding.binding, &mut path_string);
         if result.into_raw() < 0 { return result; }
 
-        let action_meta = ACTIONS.as_ref().unwrap().get(&suggested_binding.action.into_raw()).unwrap();
-        println!("=>{}, {}, {}", action_meta.action_set.localized_name, action_meta.localized_name, path_string);
+        let action_meta = Action::from_handle(suggested_binding.action).try_borrow().unwrap();
+        
+        println!("=>{}, {}, {}", action_meta.action_set().try_borrow().unwrap().localized_name, action_meta.localized_name, path_string);
     }
     println!("~~~~~~");   
 
-    instance.suggest_interaction_profile_bindings(suggested_bindings_ptr)
+    instance.borrow().suggest_interaction_profile_bindings(suggested_bindings_ptr)
 }
 
 unsafe fn i8_arr_to_owned(arr: &[i8]) -> String {

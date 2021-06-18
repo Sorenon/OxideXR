@@ -1,22 +1,21 @@
 use openxr_sys as xr;
 use openxr_sys::pfn as pfn;
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::rc::Weak;
-use serde::{Deserialize, Serialize};
 
-pub static mut INSTANCES: Option<HashMap<u64, Rc<Instance>>> = None;
-pub static mut ACTIONS: Option<HashMap<u64, Rc<Action>>> = None;
-pub static mut ACTION_SETS: Option<HashMap<u64, Rc<ActionSet>>> = None;
+type HandleMap<T> = Option<HashMap<u64, Rc<RefCell<T>>>>;
 
-pub unsafe fn to_meta(instance: xr::Instance) -> Rc<Instance> {
-    INSTANCES.as_ref().unwrap().get(&instance.into_raw()).unwrap().clone()
-} 
+//TODO thread safety
+pub static mut INSTANCES: HandleMap<Instance> = None;
+pub static mut ACTIONS: HandleMap<Action> = None;
+pub static mut ACTION_SETS: HandleMap<ActionSet> = None;
 
 pub struct Instance {
     pub handle: xr::Instance,
-    pub action_sets: Vec<Rc<ActionSet>>,
+    pub action_sets: Vec<Rc<RefCell<ActionSet>>>,
 
     pub application_name: String,
     pub application_version: u32,
@@ -32,8 +31,8 @@ pub struct Instance {
 #[derive(Debug)]
 pub struct ActionSet {
     pub handle: xr::ActionSet,
-    pub instance: Weak<Instance>,
-    pub actions: Vec<Rc<Action>>,
+    pub instance: Weak<RefCell<Instance>>,
+    pub actions: Vec<Rc<RefCell<Action>>>,
 
     pub name: String,
     pub localized_name: String,
@@ -43,8 +42,7 @@ pub struct ActionSet {
 #[derive(Debug)]
 pub struct Action {
     pub handle: xr::Action,
-    pub action_set: Weak<ActionSet>, 
-
+    pub action_set: Weak<RefCell<ActionSet>>, 
     pub name: String,
     pub action_type: xr::ActionType,
     pub subaction_paths: Vec<xr::Path>,
@@ -70,18 +68,6 @@ impl Instance {
     ) -> xr::Result {
         unsafe {
             (self.create_action_set)(self.handle, create_info, action_set)
-        }
-    }
-
-    #[inline]
-    pub fn create_action(
-        &self,
-        action_set: xr::ActionSet, 
-        create_info: *const xr::ActionCreateInfo, 
-        action: *mut xr::Action
-    ) -> xr::Result {
-        unsafe {
-            (self.create_action)(action_set, create_info, action)
         }
     }
     
@@ -118,6 +104,49 @@ impl Instance {
             string.insert_str(0, slice);
 
             result
+        }
+    }
+
+    pub fn from_handle(handle: xr::Instance) -> &'static Rc<RefCell<Instance>> {
+        unsafe {
+            INSTANCES.as_ref().unwrap().get(&handle.into_raw()).unwrap()
+        }
+    }
+}
+
+impl ActionSet {
+    #[inline]
+    pub fn create_action(
+        &self,
+        create_info: *const xr::ActionCreateInfo, 
+        action: *mut xr::Action
+    ) -> xr::Result {
+        unsafe {
+            (self.instance().try_borrow().unwrap().create_action)(self.handle, create_info, action)
+        }
+    }
+
+    #[inline]
+    pub fn instance(&self) -> Rc<RefCell<Instance>> {
+        self.instance.upgrade().unwrap().clone()
+    }
+
+    pub fn from_handle(handle: xr::ActionSet) -> &'static Rc<RefCell<ActionSet>> {
+        unsafe {
+            ACTION_SETS.as_ref().unwrap().get(&handle.into_raw()).unwrap()
+        }
+    }
+}
+
+impl Action {
+    #[inline]
+    pub fn action_set(&self) -> Rc<RefCell<ActionSet>> {
+        self.action_set.upgrade().unwrap().clone()
+    }
+
+    pub fn from_handle(handle: xr::Action) -> &'static Rc<RefCell<Action>> {
+        unsafe {
+            ACTIONS.as_ref().unwrap().get(&handle.into_raw()).unwrap()
         }
     }
 }

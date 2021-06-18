@@ -1,19 +1,19 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 struct InstanceActions {
     name: String,
     action_sets: Vec<ActionSet>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 struct ActionSet {
     name: String,
     localized_name: String,
     actions: Vec<Action>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 struct Action {
     name: String,
     localized_name: String,
