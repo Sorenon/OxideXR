@@ -37,8 +37,10 @@ pub struct XrNegotiateRuntimeRequest {
     pub get_instance_proc_addr: Option<pfn::GetInstanceProcAddr>,
 }
 
+#[allow(dead_code)]
 pub type FnNegotiateLoaderApiLayerInterface = unsafe extern "system" fn(loader_info: *const XrNegotiateLoaderInfo, api_layer_name: *const i8, api_layer_request: *mut XrNegotiateApiLayerRequest) -> Result;
 
+#[allow(dead_code)]
 pub type FnNegotiateLoaderRuntimeInterface = unsafe extern "system" fn(loader_info: *const XrNegotiateLoaderInfo, runtime_request: *mut XrNegotiateRuntimeRequest) -> Result;
 
 #[repr(C)]

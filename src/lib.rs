@@ -2,7 +2,6 @@ mod loader_interfaces;
 mod wrappers;
 mod serial;
 
-use xr::Version;
 use wrappers::*;
 use loader_interfaces::*;
 
@@ -124,15 +123,15 @@ unsafe extern "system" fn create_session(
 
     if result.into_raw() < 0 { return result; }
 
-    let meta = Rc::new(RefCell::new(Session {
+    let wrapper = Rc::new(RefCell::new(Session {
         handle: *session,
         instance: Rc::downgrade(instance)
     }));
 
-    //TODO Add this action_set to the rt tree
+    //TODO Add this to the wrapper tree
 
-    //Add this action_set to the rt map
-    SESSIONS.as_mut().unwrap().insert((*session).into_raw(), meta);
+    //Add this action_set to the wrapper map
+    SESSIONS.as_mut().unwrap().insert((*session).into_raw(), wrapper);
 
     result
 }
@@ -151,7 +150,7 @@ unsafe extern "system" fn create_action_set(
     let name = i8_arr_to_owned(&create_info.action_set_name);
     let localized_name = i8_arr_to_owned(&create_info.localized_action_set_name);
 
-    let meta = Rc::new(RefCell::new(ActionSet {
+    let wrapper = Rc::new(RefCell::new(ActionSet {
         handle: *action_set,
         instance: Rc::downgrade(instance),
         actions: Vec::new(),
@@ -160,11 +159,11 @@ unsafe extern "system" fn create_action_set(
         priority: create_info.priority
     }));
 
-    //Add this action_set to the rt tree
-    instance.try_borrow_mut().unwrap().action_sets.push(meta.clone());
+    //Add this action_set to the wrapper tree
+    instance.try_borrow_mut().unwrap().action_sets.push(wrapper.clone());
 
-    //Add this action_set to the rt map
-    ACTION_SETS.as_mut().unwrap().insert((*action_set).into_raw(), meta);
+    //Add this action_set to the wrapper map
+    ACTION_SETS.as_mut().unwrap().insert((*action_set).into_raw(), wrapper);
 
     result
 }
@@ -182,7 +181,7 @@ unsafe extern "system" fn create_action(
 
     let create_info = *create_info;
 
-    let meta = Rc::new(RefCell::new(Action {
+    let wrapper = Rc::new(RefCell::new(Action {
         handle: *action,
         action_set: Rc::downgrade(action_set),
         name: i8_arr_to_owned(&create_info.action_name),
@@ -191,11 +190,11 @@ unsafe extern "system" fn create_action(
         localized_name: i8_arr_to_owned(&create_info.localized_action_name)
     }));
     
-    //Add this action to the rt tree
-    action_set.try_borrow_mut().unwrap().actions.push(meta.clone());
+    //Add this action to the wrapper tree
+    action_set.try_borrow_mut().unwrap().actions.push(wrapper.clone());
 
-    //Add this action to the rt map
-    ACTIONS.as_mut().unwrap().insert((*action).into_raw(), meta);
+    //Add this action to the wrapper map
+    ACTIONS.as_mut().unwrap().insert((*action).into_raw(), wrapper);
     
     result
 }
@@ -251,9 +250,10 @@ unsafe extern "system" fn attach_session_action_sets(
     };
 
     application_actions.action_sets = action_sets;
+
+    let _uuid = serial::get_uuid(&application_actions.application_name);
     
     println!("{}", serde_json::to_string_pretty(&application_actions).unwrap());
-    // instance.application_actions.action_sets.
 
     result
 }
@@ -277,11 +277,13 @@ unsafe extern "system" fn suggest_interaction_profile_bindings(
         let result = instance.path_to_string(suggested_binding.binding, &mut path_string);
         if result.into_raw() < 0 { return result; }
 
-        let action_meta = Action::from_handle(suggested_binding.action).try_borrow().unwrap();
+        let action_wrapper = Action::from_handle(suggested_binding.action).try_borrow().unwrap();
         
-        println!("=>{}, {}, {}", action_meta.action_set().try_borrow().unwrap().localized_name, action_meta.localized_name, path_string);
+        println!("=>{}, {}, {}", action_wrapper.action_set().try_borrow().unwrap().localized_name, action_wrapper.localized_name, path_string);
     }
-    println!("~~~~~~");   
+    println!("~~~~~~");
+
+    
 
     instance.borrow().suggest_interaction_profile_bindings(suggested_bindings_ptr)
 }

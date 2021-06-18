@@ -1,3 +1,6 @@
+pub mod bindings;
+pub mod actions;
+
 use std::{collections::HashMap, fs::{self, File}, io::Write, path::Path};
 
 use serde::{Deserialize, Serialize};
@@ -65,22 +68,10 @@ fn test_json(){
             }
         ]
     };
-
-    let mut applications = read_applications();
-    let uuid = match applications.map.get(&thing.application_name) {
-        Some(id) => id.clone(),
-        None => {
-            let id = uuid::Uuid::new_v4().to_simple().to_string();
-            applications.map.insert(thing.application_name.clone(), id.clone());
-            write_applications(&applications);
-            id
-        },
-    };
-
-    println!("{}", serde_json::to_string_pretty(&applications).unwrap());
+    println!("{}", serde_json::to_string_pretty(&thing).unwrap());
 }
 
-fn read_applications() -> Applications {
+pub fn read_applications() -> Applications {
     let path = Path::new(APPLICATIONS);
     let display = path.display();
 
@@ -100,7 +91,7 @@ fn read_applications() -> Applications {
     }
 }
 
-fn write_applications(applications: &Applications) {
+pub fn write_applications(applications: &Applications) {
     let path = Path::new(APPLICATIONS);
     let display = path.display();
     fs::create_dir_all(CONFIG_DIR).unwrap();
@@ -115,5 +106,18 @@ fn write_applications(applications: &Applications) {
     }
 }
 
-const CONFIG_DIR: &'static str = "config";
-const APPLICATIONS: &'static str = "config/applications.json";
+pub fn get_uuid(application_name: &str) -> String {
+    let mut applications = read_applications();
+    match applications.map.get(application_name) {
+        Some(id) => id.clone(),
+        None => {
+            let id = uuid::Uuid::new_v4().to_simple().to_string();
+            applications.map.insert(application_name.to_owned(), id.clone());
+            write_applications(&applications);
+            id
+        },
+    }
+}
+
+pub const CONFIG_DIR: &'static str = "config";
+pub const APPLICATIONS: &'static str = "config/applications.json";
