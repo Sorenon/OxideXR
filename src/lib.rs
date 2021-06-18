@@ -1,9 +1,9 @@
 mod loader_interfaces;
-mod xr_handle_types;
+mod wrappers;
 mod serial;
 
 use xr::Version;
-use xr_handle_types::*;
+use wrappers::*;
 use loader_interfaces::*;
 
 use openxr_sys as xr;
@@ -18,10 +18,7 @@ use std::rc::Rc;
 
 const LAYER_NAME: &'static str = "XR_APILAYER_BULLCH_openxr_pp";
 
-static mut GET_INSTANCE_PROC_ADDR: Option<pfn::GetInstanceProcAddr> = None;
-static mut CREATE_INSTANCE: Option<pfn::CreateInstance> = None;
-
-static mut PROC_NEXT: Option<pfn::GetInstanceProcAddr> = None;
+static mut GET_INSTANCE_PROC_ADDR_NEXT: Option<pfn::GetInstanceProcAddr> = None;
 
 #[no_mangle]
 pub unsafe extern "system" fn xrNegotiateLoaderApiLayerInterface(
@@ -30,7 +27,7 @@ pub unsafe extern "system" fn xrNegotiateLoaderApiLayerInterface(
     api_layer_request: *mut XrNegotiateApiLayerRequest
 ) -> xr::Result
 {
-    println!("loaded layer->{}", CStr::from_ptr(layer_name).to_str().unwrap());
+    assert_eq!(LAYER_NAME, CStr::from_ptr(layer_name).to_str().unwrap());
 
     let loader_info = &*loader_info;
     let api_layer_request = &mut *api_layer_request;
@@ -39,109 +36,40 @@ pub unsafe extern "system" fn xrNegotiateLoaderApiLayerInterface(
     api_layer_request.get_instance_proc_addr = Some(instance_proc_addr);
     api_layer_request.create_api_layer_instance = Some(create_api_layer_instance);
 
+    if INSTANCES.is_none() {
+        INSTANCES = Some(HashMap::new());
+        SESSIONS = Some(HashMap::new());
+        ACTIONS = Some(HashMap::new());
+        ACTION_SETS = Some(HashMap::new());
+    }
+
     xr::Result::SUCCESS
 }
 
 unsafe extern "system" fn create_api_layer_instance(
     info: *const xr::InstanceCreateInfo, 
     layer_info: *const ApiLayerCreateInfo, 
-    instance: xr::Instance
+    instance: *mut xr::Instance
 ) -> xr::Result 
 {
     let next_info = &*(*layer_info).next_info;
-    PROC_NEXT = Some(next_info.next_get_instance_proc_addr.clone());
 
-    let mut my_create_info = (*layer_info).clone();
-    my_create_info.next_info = next_info.next;
+    assert_eq!(LAYER_NAME, CStr::from_ptr(std::mem::transmute(next_info.layer_name.as_ptr())).to_str().unwrap());
 
-    (next_info.next_create_api_layer_instance)(info, std::ptr::addr_of!(my_create_info), instance)
-}
+    GET_INSTANCE_PROC_ADDR_NEXT = Some(next_info.next_get_instance_proc_addr.clone()); //Store the GetInstanceProcAddr func of the layer bellow us
 
-//This function is what the OpenXR Loader latches onto
-//#[no_mangle]
-// pub unsafe extern "system" fn xrNegotiateLoaderRuntimeInterface(
-//     loader_info: *const XrNegotiateLoaderInfo,
-//     runtime_request: *mut XrNegotiateRuntimeRequest,
-// ) -> xr::Result {
-//     if INSTANCES.is_none() {
-//         INSTANCES = Some(HashMap::new());
-//         SESSIONS = Some(HashMap::new());
-//         ACTIONS = Some(HashMap::new());
-//         ACTION_SETS = Some(HashMap::new());
-//     }
+    let result = { //Initialize the layer bellow us
+        let mut my_create_info = (*layer_info).clone();
+        my_create_info.next_info = next_info.next;
 
-//     #[cfg(target_os = "windows")]
-//     let raw_func = {
-//         use winapi::um::libloaderapi::GetProcAddress;
-//         use winapi::um::libloaderapi::LoadLibraryA;
-        
-//         let runtime = LoadLibraryA(format!("{}\0", RUNTIME_PATH).as_ptr() as *const i8,);
-//         if runtime == std::ptr::null_mut() {
-//             eprintln!("Module at \"{}\" could not be loaded!", RUNTIME_PATH);
-//             return xr::Result::ERROR_RUNTIME_FAILURE;
-//         }
-    
-//         let raw_func = GetProcAddress(runtime,"xrNegotiateLoaderRuntimeInterface\0".as_ptr() as *const i8,);
-    
-//         if raw_func == std::ptr::null_mut() {
-//             eprintln!("Module at \"{}\" does not expose xrNegotiateLoaderRuntimeInterface!", RUNTIME_PATH);
-//             return xr::Result::ERROR_RUNTIME_FAILURE;
-//         }
-
-//         raw_func
-//     };
-
-//     let xr_negotiate_loader_runtime_interface: FnNegotiateLoaderRuntimeInterface = std::mem::transmute(raw_func);
-//     let result = xr_negotiate_loader_runtime_interface(loader_info, runtime_request);
-
-//     GET_INSTANCE_PROC_ADDR = (*runtime_request).get_instance_proc_addr;
-//     (*runtime_request).get_instance_proc_addr = Some(instance_proc_addr);
-
-//     result
-// }
-
-
-unsafe extern "system" fn instance_proc_addr(instance: xr::Instance, name: *const c_char, function: *mut Option<pfn::VoidFunction>) -> xr::Result {
-    // let result = GET_INSTANCE_PROC_ADDR.unwrap()(instance, name, function);
-
-    // let name_str = if let Ok(slice) = CStr::from_ptr(name).to_str() { slice } else { return xr::Result::ERROR_VALIDATION_FAILURE };
-    // println!("instance_proc_addr: {}", name_str);
-
-    // if result.into_raw() >= 0 {
-    //     if instance.into_raw() == 0 && name_str == "xrCreateInstance" {
-    //         CREATE_INSTANCE = Some(std::mem::transmute((*function).unwrap()));
-    //     }
-
-    //     (*function) = Some(
-    //         match name_str {
-    //             "xrCreateInstance" => std::mem::transmute(create_instance as pfn::CreateInstance),
-    //             "xrCreateSession" => std::mem::transmute(create_session as pfn::CreateSession),
-    //             "xrCreateActionSet" => std::mem::transmute(create_action_set as pfn::CreateActionSet),
-    //             "xrCreateAction" => std::mem::transmute(create_action as pfn::CreateAction),
-    //             "xrSuggestInteractionProfileBindings" => std::mem::transmute(suggest_interaction_profile_bindings as pfn::SuggestInteractionProfileBindings),
-    //             "xrAttachSessionActionSets" => std::mem::transmute(attach_session_action_sets as pfn::AttachSessionActionSets),
-    //             _ => (*function).unwrap()
-    //         }
-    //     );
-    // }
-
-    // result
-    println!("get proc addr");
-
-    (PROC_NEXT.unwrap())(instance, name, function)
-}
-
-unsafe extern "system" fn create_instance(
-    create_info: *const xr::InstanceCreateInfo,
-    instance: *mut xr::Instance,
-) -> xr::Result {
-    let result = CREATE_INSTANCE.unwrap()(create_info, instance);
+        (next_info.next_create_api_layer_instance)(info, std::ptr::addr_of!(my_create_info), instance)
+    };
 
     if result.into_raw() < 0 { return result; }
+    
+    let application_info = &(*info).application_info;
 
-    let application_info = (*create_info).application_info;
-
-    let meta = Instance {
+    let wrapper = wrappers::Instance {
         handle: *instance,
         action_sets: Vec::new(),
 
@@ -159,7 +87,29 @@ unsafe extern "system" fn create_instance(
     };
 
     //Add this instance to the rt map
-    INSTANCES.as_mut().unwrap().insert((*instance).into_raw(), Rc::new(RefCell::new(meta)));
+    INSTANCES.as_mut().unwrap().insert((*instance).into_raw(), Rc::new(RefCell::new(wrapper)));
+
+    result
+}
+
+unsafe extern "system" fn instance_proc_addr(instance: xr::Instance, name: *const c_char, function: *mut Option<pfn::VoidFunction>) -> xr::Result {
+    let result = GET_INSTANCE_PROC_ADDR_NEXT.unwrap()(instance, name, function);
+
+    if result.into_raw() < 0 { return result; }
+
+    let name_str = if let Ok(slice) = CStr::from_ptr(name).to_str() { slice } else { return xr::Result::ERROR_VALIDATION_FAILURE };
+    println!("instance_proc_addr: {}", name_str);
+
+    (*function) = Some(
+        match name_str {
+            "xrCreateSession" => std::mem::transmute(create_session as pfn::CreateSession),
+            "xrCreateActionSet" => std::mem::transmute(create_action_set as pfn::CreateActionSet),
+            "xrCreateAction" => std::mem::transmute(create_action as pfn::CreateAction),
+            "xrSuggestInteractionProfileBindings" => std::mem::transmute(suggest_interaction_profile_bindings as pfn::SuggestInteractionProfileBindings),
+            "xrAttachSessionActionSets" => std::mem::transmute(attach_session_action_sets as pfn::AttachSessionActionSets),
+            _ => (*function).unwrap()
+        }
+    );
 
     result
 }
@@ -343,53 +293,9 @@ unsafe fn i8_arr_to_owned(arr: &[i8]) -> String {
 unsafe fn get_func(instance: xr::Instance, name: &str) -> Option<pfn::VoidFunction> {
     let mut func: Option<pfn::VoidFunction> = None;
     
-    if GET_INSTANCE_PROC_ADDR.unwrap()(instance, format!("{}\0", name).as_ptr() as *const i8, std::ptr::addr_of_mut!(func)).into_raw() < 0 {
+    if GET_INSTANCE_PROC_ADDR_NEXT.unwrap()(instance, format!("{}\0", name).as_ptr() as *const i8, std::ptr::addr_of_mut!(func)).into_raw() < 0 {
         return None;
     }
 
     func
-}
-
-#[test]
-fn test() {
-    use winapi::um::libloaderapi::GetProcAddress;
-    use winapi::um::libloaderapi::LoadLibraryA;
-
-    unsafe {
-        let module = LoadLibraryA("C:\\Program Files (x86)\\Steam\\steamapps\\common\\SteamVR\\bin\\vrclient_x64.dll\0".as_ptr() as *const i8,);
-        println!("module {}", module as usize);
-
-        let procc_addr_ptr = GetProcAddress(module,"xrNegotiateLoaderRuntimeInterface\0".as_ptr() as *const i8);
-        println!("xrNegotiateLoaderRuntimeInterface {}",  procc_addr_ptr as usize);
-
-        let test: FnNegotiateLoaderRuntimeInterface = std::mem::transmute(procc_addr_ptr);
-        let loader_info = XrNegotiateLoaderInfo {
-            ty: xr::StructureType::from_raw(1),
-            struct_version: 1,
-            struct_size: 40,
-            min_interface_version: 1,
-            max_interface_version: 1,
-            min_api_version: xr::Version::from_raw(281474976710656),
-            max_api_version: xr::Version::from_raw(285868728258559),
-        };
-
-        let mut request = XrNegotiateRuntimeRequest {
-            ty: xr::StructureType::from_raw(3),
-            struct_version: 1,
-            struct_size: 40,
-            runtime_interface_version: 0,
-            runtime_api_version: xr::Version::from_raw(0),
-            get_instance_proc_addr: None,
-        };
-
-        test(std::ptr::addr_of!(loader_info), std::ptr::addr_of_mut!(request));
-
-        println!("[{:?}]", loader_info);
-        // println!("[{:?}]", request);
-
-        let func2 = request.get_instance_proc_addr.unwrap();
-        let mut f_out = Option::<pfn::VoidFunction>::None;
-        println!("{}", func2(xr::Instance::from_raw(0), "xrCreateInstance\0".as_ptr() as *const i8, std::ptr::addr_of_mut!(f_out)));
-        println!("{:?}", f_out.unwrap() as * const ());
-    }
 }

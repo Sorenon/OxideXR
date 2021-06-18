@@ -1,6 +1,6 @@
 use openxr_sys::*;
 
-pub type FnCreateApiLayerInstance = unsafe extern "system" fn(info: *const InstanceCreateInfo, api_layer_info: *const ApiLayerCreateInfo, instance: Instance) -> Result;
+pub type FnCreateApiLayerInstance = unsafe extern "system" fn(info: *const InstanceCreateInfo, api_layer_info: *const ApiLayerCreateInfo, instance: *mut Instance) -> Result;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
