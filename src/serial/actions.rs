@@ -18,7 +18,7 @@ pub struct ActionSet {
 pub struct Action {
     pub localized_name: String,
     pub action_type: ActionType,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub subaction_paths: Vec<String>,
 }
 
@@ -30,6 +30,15 @@ pub enum ActionType {
     PoseInput,
     VibrationOutput,
     Unknown
+}
+
+impl ApplicationActions {
+    pub fn from_name(name: &String) -> ApplicationActions {
+        ApplicationActions {
+            application_name: name.clone(),
+            action_sets: HashMap::new(),
+        }
+    }
 }
 
 impl ActionType {

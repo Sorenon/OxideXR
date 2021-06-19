@@ -2,9 +2,11 @@ mod loader_interfaces;
 mod wrappers;
 mod serial;
 mod mixin;
+mod util;
 
 use wrappers::*;
 use loader_interfaces::*;
+use util::*;
 
 use openxr_sys as xr;
 use openxr_sys::pfn as pfn;
@@ -14,10 +16,6 @@ use std::collections::HashMap;
 use std::os::raw::c_char;
 use std::ffi::CStr;
 use std::rc::Rc;
-
-const LAYER_NAME: &'static str = "XR_APILAYER_BULLCH_openxr_pp";
-
-static mut GET_INSTANCE_PROC_ADDR_NEXT: Option<pfn::GetInstanceProcAddr> = None;
 
 #[no_mangle]
 pub unsafe extern "system" fn xrNegotiateLoaderApiLayerInterface(
@@ -83,6 +81,7 @@ unsafe extern "system" fn create_api_layer_instance(
         attach_session_action_sets: std::mem::transmute(get_func(*instance, "xrAttachSessionActionSets").unwrap()),
         suggest_interaction_profile_bindings: std::mem::transmute(get_func(*instance, "xrSuggestInteractionProfileBindings").unwrap()),
         path_to_string: std::mem::transmute(get_func(*instance, "xrPathToString").unwrap()),
+        string_to_path: std::mem::transmute(get_func(*instance, "xrStringToPath").unwrap()),
     };
 
     //Add this instance to the wrapper map
@@ -104,27 +103,11 @@ unsafe extern "system" fn instance_proc_addr(instance: xr::Instance, name: *cons
             "xrCreateSession" => std::mem::transmute(mixin::create_session as pfn::CreateSession),
             "xrCreateActionSet" => std::mem::transmute(mixin::create_action_set as pfn::CreateActionSet),
             "xrCreateAction" => std::mem::transmute(mixin::create_action as pfn::CreateAction),
-            "xrSuggestInteractionProfileBindings" => std::mem::transmute(mixin::suggest_interaction_profile_bindings as pfn::SuggestInteractionProfileBindings),
-            "xrAttachSessionActionSets" => std::mem::transmute(mixin::attach_session_action_sets as pfn::AttachSessionActionSets),
+            "xrSuggestInteractionProfileBindings" => std::mem::transmute(mixin::bindings::suggest_interaction_profile_bindings as pfn::SuggestInteractionProfileBindings),
+            "xrAttachSessionActionSets" => std::mem::transmute(mixin::actions::attach_session_action_sets as pfn::AttachSessionActionSets),
             _ => (*function).unwrap()
         }
     );
 
     result
-}
-
-unsafe fn i8_arr_to_owned(arr: &[i8]) -> String {
-    String::from(CStr::from_ptr(std::mem::transmute(arr.as_ptr())).to_str().unwrap())
-}
-
-unsafe fn get_func(instance: xr::Instance, name: &str) -> Result<pfn::VoidFunction, xr::Result> {
-    let mut func: Option<pfn::VoidFunction> = None;
-    
-    let result = GET_INSTANCE_PROC_ADDR_NEXT.unwrap()(instance, format!("{}\0", name).as_ptr() as *const i8, std::ptr::addr_of_mut!(func));
-
-    if result.into_raw() < 0 {
-        return Err(result);
-    }
-
-    Ok(func.unwrap())
 }

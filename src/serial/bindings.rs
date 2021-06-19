@@ -2,19 +2,21 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+use crate::wrappers;
+
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct Root {
     #[serde(flatten)]
     pub profiles: HashMap<String, InteractionProfile>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct InteractionProfile {
     #[serde(flatten)]
     pub action_sets: HashMap<String, ActionSet>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct ActionSet {
     #[serde(flatten)]
     pub actions: HashMap<String, Action>,
@@ -31,6 +33,52 @@ pub struct Action {
 pub enum BindingType {
     Binding(String),
     Bindings(Vec<String>),
+}
+
+impl BindingType {
+    // pub fn for_binding(&self, all_bindings: &mut Vec<openxr_sys::ActionSuggestedBinding>, instance: &wrappers::Instance, handle: openxr_sys::Action) {
+    //     fn inner(binding: &str, all_bindings: &mut Vec<openxr_sys::ActionSuggestedBinding>, instance: &wrappers::Instance, handle: openxr_sys::Action) {
+    //         let mut path = openxr_sys::Path::from_raw(0);
+    //         instance.string_to_path(binding, std::ptr::addr_of_mut!(path));
+    //         all_bindings.push(openxr_sys::ActionSuggestedBinding{
+    //             action: handle,
+    //             binding: path,
+    //         });
+    //     }
+
+    //     match &self {
+    //         BindingType::Binding(binding) => {
+    //             inner(binding, all_bindings, instance, handle)
+    //         },
+    //         BindingType::Bindings(bindings) => {
+    //             for binding in bindings {
+    //                 inner(binding, all_bindings, instance, handle)
+    //             }
+    //         },
+    //     }
+    // }
+
+    pub fn add_to_vec(&self, all_bindings: &mut Vec<openxr_sys::ActionSuggestedBinding>, instance: &wrappers::Instance, handle: openxr_sys::Action) {
+        let mut inner = |binding: &str| {
+            let mut path = openxr_sys::Path::from_raw(0);
+            instance.string_to_path(binding, std::ptr::addr_of_mut!(path));
+            all_bindings.push(openxr_sys::ActionSuggestedBinding{
+                action: handle,
+                binding: path,
+            });
+        };
+
+        match &self {
+            BindingType::Binding(binding) => {
+                inner(binding)
+            },
+            BindingType::Bindings(bindings) => {
+                for binding in bindings {
+                    inner(binding)
+                }
+            },
+        }
+    }
 }
 
 #[test]

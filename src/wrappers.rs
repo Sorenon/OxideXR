@@ -29,6 +29,7 @@ pub struct Instance {
     pub attach_session_action_sets: pfn::AttachSessionActionSets,
     pub suggest_interaction_profile_bindings: pfn::SuggestInteractionProfileBindings,
     pub path_to_string: pfn::PathToString,
+    pub string_to_path: pfn::StringToPath,
 }
 
 #[derive(Debug)]
@@ -102,6 +103,16 @@ impl Instance {
     }
 
     #[inline]
+    pub fn string_to_path(
+        &self,
+        path_string: &str,
+        path: *mut xr::Path,
+    ) -> xr::Result {
+        unsafe {
+            (self.string_to_path)(self.handle, crate::util::str_to_cstr(path_string), path)
+        }
+    }
+
     pub fn path_to_string(
         &self, 
         path: xr::Path,
