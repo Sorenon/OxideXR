@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs::{self, File}, io::Write, path::Path};
+use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -16,7 +16,6 @@ pub struct ActionSet {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Action {
-    pub name: String,
     pub localized_name: String,
     pub action_type: ActionType,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -33,8 +32,15 @@ pub enum ActionType {
     Unknown
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct Applications {
-    #[serde(flatten)]
-    pub map: HashMap<String, String>
+impl ActionType {
+    pub fn from_xr(action_type: openxr_sys::ActionType) -> ActionType {
+        match action_type {
+            openxr_sys::ActionType::BOOLEAN_INPUT => ActionType::BooleanInput,
+            openxr_sys::ActionType::FLOAT_INPUT => ActionType::FloatInput,
+            openxr_sys::ActionType::POSE_INPUT => ActionType::PoseInput,
+            openxr_sys::ActionType::VECTOR2F_INPUT => ActionType::Vector2fInput,
+            openxr_sys::ActionType::VIBRATION_OUTPUT => ActionType::VibrationOutput,
+            _ => ActionType::Unknown
+        }
+    }
 }

@@ -5,70 +5,13 @@ use std::{collections::HashMap, fs::{self, File}, io::Write, path::Path};
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct ApplicationActions {
-    pub application_name: String,
-    pub action_sets: Vec<ActionSet>,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct ActionSet {
-    pub name: String,
-    pub localized_name: String,
-    pub actions: Vec<Action>,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct Action {
-    pub name: String,
-    pub localized_name: String,
-    pub action_type: ActionType,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub subaction_paths: Vec<String>,
-}
-
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Deserialize, Serialize)]
-pub enum ActionType {
-    BooleanInput,
-    FloatInput,
-    Vector2fInput,
-    PoseInput,
-    VibrationOutput,
-    Unknown
-}
+pub const CONFIG_DIR: &'static str = "config";
+pub const APPLICATIONS: &'static str = "config/applications.json";
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Applications {
     #[serde(flatten)]
     pub map: HashMap<String, String>
-}
-
-#[test]
-fn test_json(){
-    let thing = ApplicationActions {
-        application_name: String::from("[MCXR] Minecraft VR"),
-        action_sets: vec![
-            ActionSet {
-                name: String::from("gameplay"),
-                localized_name: String::from("Gameplay"),
-                actions: vec![
-                    Action {
-                        name: String::from("attack"),
-                        localized_name: String::from("Attack"),
-                        action_type: ActionType::BooleanInput,
-                        subaction_paths: Default::default()
-                    },
-                    Action {
-                        name: String::from("use"),
-                        localized_name: String::from("Use"),
-                        action_type: ActionType::BooleanInput,
-                        subaction_paths: Default::default()
-                    }
-                ]
-            }
-        ]
-    };
-    println!("{}", serde_json::to_string_pretty(&thing).unwrap());
 }
 
 pub fn read_applications() -> Applications {
@@ -118,6 +61,3 @@ pub fn get_uuid(application_name: &str) -> String {
         },
     }
 }
-
-pub const CONFIG_DIR: &'static str = "config";
-pub const APPLICATIONS: &'static str = "config/applications.json";

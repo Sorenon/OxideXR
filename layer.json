@@ -2,10 +2,10 @@
     "file_format_version" : "1.0.0",
     "api_layer": {
         "name": "XR_APILAYER_BULLCH_openxr_pp",
-        "library_path": "C:\\Users\\soren\\Documents\\Programming\\rust\\openxr-runtime-wrapper\\target\\debug\\openxr_bindings_customizer.dll",
+        "library_path": "C:\\Users\\soren\\Documents\\Programming\\rust\\openxr-pp\\target\\debug\\openxr_bindings_customizer.dll",
         "api_version" : "1.0",
         "implementation_version" : "1",
         "description" : "im a description",
-        "disable_environment": "DISSABLE_OPENXR_PP"
+        "disable_environment": "DISABLE_OPENXR_PP"
     }
  }
