@@ -4,6 +4,7 @@ mod serial;
 mod mixin;
 mod util;
 
+use dashmap::DashMap;
 use wrappers::*;
 use loader_interfaces::*;
 use util::*;
@@ -12,10 +13,9 @@ use openxr_sys as xr;
 use openxr_sys::pfn as pfn;
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::os::raw::c_char;
 use std::ffi::CStr;
-use std::rc::Rc;
+use std::sync::Arc;
 
 #[no_mangle]
 pub unsafe extern "system" fn xrNegotiateLoaderApiLayerInterface(
@@ -32,10 +32,10 @@ pub unsafe extern "system" fn xrNegotiateLoaderApiLayerInterface(
     (*api_layer_request).create_api_layer_instance = Some(create_api_layer_instance);
 
     if INSTANCES.is_none() {
-        INSTANCES = Some(HashMap::new());
-        SESSIONS = Some(HashMap::new());
-        ACTIONS = Some(HashMap::new());
-        ACTION_SETS = Some(HashMap::new());
+        INSTANCES = Some(DashMap::new());
+        SESSIONS = Some(DashMap::new());
+        ACTIONS = Some(DashMap::new());
+        ACTION_SETS = Some(DashMap::new());
     }
 
     xr::Result::SUCCESS
@@ -85,7 +85,7 @@ unsafe extern "system" fn create_api_layer_instance(
     };
 
     //Add this instance to the wrapper map
-    INSTANCES.as_mut().unwrap().insert((*instance).into_raw(), Rc::new(RefCell::new(wrapper)));
+    INSTANCES.as_mut().unwrap().insert((*instance).into_raw(), Arc::new(RefCell::new(wrapper)));
 
     result
 }

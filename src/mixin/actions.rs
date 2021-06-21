@@ -15,7 +15,8 @@ pub unsafe extern "system" fn attach_session_action_sets(
     session: xr::Session,
     attach_info: *const xr::SessionActionSetsAttachInfo,
 ) -> xr::Result {
-    let session = Session::from_handle(session).try_borrow().unwrap();
+    let session_rc = Session::from_handle(session);
+    let session = session_rc.try_borrow().unwrap();
 
     let result = session.attach_session_action_sets(attach_info);
 
@@ -43,7 +44,8 @@ fn update_application_actions(instance: &Instance, action_set_handles: &[xr::Act
     let mut path_string = String::new();
 
     for action_set in action_set_handles {
-        let action_set = ActionSet::from_handle(action_set.clone()).try_borrow().unwrap();
+        let action_set_rc = ActionSet::from_handle(action_set.clone());
+        let action_set = action_set_rc.try_borrow().unwrap();
 
         let mut action_set_serial = actions::ActionSet {
             localized_name: action_set.localized_name.clone(),

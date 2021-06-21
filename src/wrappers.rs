@@ -1,12 +1,13 @@
+use dashmap::DashMap;
 use openxr_sys as xr;
 use openxr_sys::pfn as pfn;
 
 use std::cell::RefCell;
-use std::collections::HashMap;
-use std::rc::Rc;
-use std::rc::Weak;
+use std::sync::Weak;
+use std::sync::Arc;
 
-type HandleMap<T> = Option<HashMap<u64, Rc<RefCell<T>>>>;
+type HandleMap<T> = Option<DashMap<u64, Arc<RefCell<T>>>>;
+type DashRef<'a, T> = dashmap::mapref::one::Ref<'a, u64, Arc<RefCell<T>>>;
 
 //TODO thread safety
 pub static mut INSTANCES: HandleMap<Instance> = None;
@@ -16,7 +17,7 @@ pub static mut ACTION_SETS: HandleMap<ActionSet> = None;
 
 pub struct Instance {
     pub handle: xr::Instance,
-    pub action_sets: Vec<Rc<RefCell<ActionSet>>>,
+    pub action_sets: Vec<Arc<RefCell<ActionSet>>>,
 
     pub application_name: String,
     pub application_version: u32,
@@ -42,7 +43,7 @@ pub struct Session {
 pub struct ActionSet {
     pub handle: xr::ActionSet,
     pub instance: Weak<RefCell<Instance>>,
-    pub actions: Vec<Rc<RefCell<Action>>>,
+    pub actions: Vec<Arc<RefCell<Action>>>,
 
     pub name: String,
     pub localized_name: String,
@@ -138,7 +139,7 @@ impl Instance {
         }
     }
 
-    pub fn from_handle(handle: xr::Instance) -> &'static Rc<RefCell<Instance>> {
+    pub fn from_handle<'a>(handle: xr::Instance) -> DashRef<'a, Instance> {
         unsafe {
             INSTANCES.as_ref().unwrap().get(&handle.into_raw()).unwrap()
         }
@@ -157,11 +158,11 @@ impl Session {
     }
 
     #[inline]
-    pub fn instance(&self) -> Rc<RefCell<Instance>> {
+    pub fn instance(&self) -> Arc<RefCell<Instance>> {
         self.instance.upgrade().unwrap().clone()
     }
 
-    pub fn from_handle(handle: xr::Session) -> &'static Rc<RefCell<Session>> {
+    pub fn from_handle<'a>(handle: xr::Session) -> DashRef<'a, Session>  {
         unsafe {
             SESSIONS.as_ref().unwrap().get(&handle.into_raw()).unwrap()
         }
@@ -181,11 +182,11 @@ impl ActionSet {
     }
 
     #[inline]
-    pub fn instance(&self) -> Rc<RefCell<Instance>> {
+    pub fn instance(&self) -> Arc<RefCell<Instance>> {
         self.instance.upgrade().unwrap().clone()
     }
 
-    pub fn from_handle(handle: xr::ActionSet) -> &'static Rc<RefCell<ActionSet>> {
+    pub fn from_handle<'a>(handle: xr::ActionSet) -> DashRef<'a, ActionSet> {
         unsafe {
             ACTION_SETS.as_ref().unwrap().get(&handle.into_raw()).unwrap()
         }
@@ -194,11 +195,11 @@ impl ActionSet {
 
 impl Action {
     #[inline]
-    pub fn action_set(&self) -> Rc<RefCell<ActionSet>> {
+    pub fn action_set(&self) -> Arc<RefCell<ActionSet>> {
         self.action_set.upgrade().unwrap().clone()
     }
 
-    pub fn from_handle(handle: xr::Action) -> &'static Rc<RefCell<Action>> {
+    pub fn from_handle<'a>(handle: xr::Action) -> DashRef<'a, Action> {
         unsafe {
             ACTIONS.as_ref().unwrap().get(&handle.into_raw()).unwrap()
         }

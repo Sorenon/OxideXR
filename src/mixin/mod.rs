@@ -2,7 +2,7 @@ pub mod actions;
 pub mod bindings;
 
 use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::i8_arr_to_owned;
 use crate::wrappers::*;
@@ -19,9 +19,9 @@ pub unsafe extern "system" fn create_session(
 
     if result.into_raw() < 0 { return result; }
 
-    let wrapper = Rc::new(RefCell::new(Session {
+    let wrapper = Arc::new(RefCell::new(Session {
         handle: *session,
-        instance: Rc::downgrade(instance)
+        instance: Arc::downgrade(&instance)
     }));
 
     //TODO Add this to the wrapper tree
@@ -46,9 +46,9 @@ pub unsafe extern "system" fn create_action_set(
     let name = i8_arr_to_owned(&create_info.action_set_name);
     let localized_name = i8_arr_to_owned(&create_info.localized_action_set_name);
 
-    let wrapper = Rc::new(RefCell::new(ActionSet {
+    let wrapper = Arc::new(RefCell::new(ActionSet {
         handle: *action_set,
-        instance: Rc::downgrade(instance),
+        instance: Arc::downgrade(&instance),
         actions: Vec::new(),
         name: name.clone(),
         localized_name: localized_name.clone(),
@@ -77,9 +77,9 @@ pub unsafe extern "system" fn create_action(
 
     let create_info = *create_info;
 
-    let wrapper = Rc::new(RefCell::new(Action {
+    let wrapper = Arc::new(RefCell::new(Action {
         handle: *action,
-        action_set: Rc::downgrade(action_set),
+        action_set: Arc::downgrade(&action_set),
         name: i8_arr_to_owned(&create_info.action_name),
         action_type: create_info.action_type,
         subaction_paths: std::slice::from_raw_parts(create_info.subaction_paths, create_info.count_subaction_paths as usize).to_owned(),

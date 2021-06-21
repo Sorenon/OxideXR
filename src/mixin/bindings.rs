@@ -13,7 +13,8 @@ pub unsafe extern "system" fn suggest_interaction_profile_bindings(
     instance: xr::Instance, 
     suggested_bindings: *const xr::InteractionProfileSuggestedBinding
 ) -> xr::Result {
-    let instance = Instance::from_handle(instance).try_borrow().unwrap();
+    let instance_rc = Instance::from_handle(instance);
+    let instance = instance_rc.try_borrow().unwrap();
 
     let result = instance.suggest_interaction_profile_bindings(suggested_bindings);
 
@@ -72,7 +73,8 @@ fn update_default_bindings(instance: &Instance, suggested_bindings: &[xr::Action
     let mut path_string = String::new();
 
     for suggested_binding in suggested_bindings {
-        let action = Action::from_handle(suggested_binding.action).try_borrow().unwrap();
+        let action_rc = Action::from_handle(suggested_binding.action);
+        let action = action_rc.try_borrow().unwrap();
         instance.path_to_string(suggested_binding.binding, &mut path_string);
         let action_set_rc = action.action_set();
         let action_set_name = &action_set_rc.try_borrow().unwrap().name;
