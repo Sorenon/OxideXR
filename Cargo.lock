@@ -116,17 +116,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "openxr-bindings-customizer"
-version = "0.1.0"
-dependencies = [
- "dashmap",
- "openxr-sys",
- "serde",
- "serde_json",
- "uuid",
-]
-
-[[package]]
 name = "openxr-sys"
 version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -135,6 +124,17 @@ dependencies = [
  "jni",
  "libc",
  "winapi",
+]
+
+[[package]]
+name = "oxidexr"
+version = "0.1.0"
+dependencies = [
+ "dashmap",
+ "openxr-sys",
+ "serde",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]

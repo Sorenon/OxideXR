@@ -4,7 +4,7 @@ use std::ffi::CString;
 use openxr_sys as xr;
 use openxr_sys::pfn as pfn;
 
-pub const LAYER_NAME: &'static str = "XR_APILAYER_BULLCH_openxr_pp";
+pub const LAYER_NAME: &'static str = "XR_APILAYER_BULLCH_oxidexr";
 
 pub static mut GET_INSTANCE_PROC_ADDR_NEXT: Option<pfn::GetInstanceProcAddr> = None;
 

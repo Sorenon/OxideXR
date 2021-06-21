@@ -1,5 +1,5 @@
 [package]
-name = "openxr-bindings-customizer"
+name = "oxidexr"
 version = "0.1.0"
 authors = ["sorenon <sorenonandstuffs@gmail.com>"]
 edition = "2018"
