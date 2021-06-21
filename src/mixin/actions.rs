@@ -15,8 +15,7 @@ pub unsafe extern "system" fn attach_session_action_sets(
     session: xr::Session,
     attach_info: *const xr::SessionActionSetsAttachInfo,
 ) -> xr::Result {
-    let session_rc = Session::from_handle(session);
-    let session = session_rc.try_borrow().unwrap();
+    let session = Session::from_handle(session);
 
     let result = session.attach_session_action_sets(attach_info);
 
@@ -24,7 +23,7 @@ pub unsafe extern "system" fn attach_session_action_sets(
 
     let instance = session.instance();
 
-    update_application_actions(&instance.try_borrow().unwrap(), &std::slice::from_raw_parts((*attach_info).action_sets, (*attach_info).count_action_sets as usize));
+    update_application_actions(&instance, &std::slice::from_raw_parts((*attach_info).action_sets, (*attach_info).count_action_sets as usize));
 
     result
 }
@@ -44,16 +43,14 @@ fn update_application_actions(instance: &Instance, action_set_handles: &[xr::Act
     let mut path_string = String::new();
 
     for action_set in action_set_handles {
-        let action_set_rc = ActionSet::from_handle(action_set.clone());
-        let action_set = action_set_rc.try_borrow().unwrap();
+        let action_set = ActionSet::from_handle(action_set.clone());
 
         let mut action_set_serial = actions::ActionSet {
             localized_name: action_set.localized_name.clone(),
             actions: HashMap::new(),
         };
         
-        for action in &action_set.actions {
-            let action = action.try_borrow().unwrap();
+        for action in action_set.actions.read().unwrap().iter() {
             action_set_serial.actions.insert(
                 action.name.clone(),
                 actions::Action {
@@ -71,5 +68,4 @@ fn update_application_actions(instance: &Instance, action_set_handles: &[xr::Act
     }
 
     write_json(&application_actions, &Path::new(&path_str));
-
 }

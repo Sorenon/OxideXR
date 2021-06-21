@@ -2,14 +2,14 @@ use dashmap::DashMap;
 use openxr_sys as xr;
 use openxr_sys::pfn as pfn;
 
-use std::cell::RefCell;
+use std::ffi::CString;
+use std::sync::RwLock;
 use std::sync::Weak;
 use std::sync::Arc;
 
-type HandleMap<T> = Option<DashMap<u64, Arc<RefCell<T>>>>;
-type DashRef<'a, T> = dashmap::mapref::one::Ref<'a, u64, Arc<RefCell<T>>>;
+type HandleMap<T> = Option<DashMap<u64, Arc<T>>>;
+type DashRef<'a, T> = dashmap::mapref::one::Ref<'a, u64, Arc<T>>;
 
-//TODO thread safety
 pub static mut INSTANCES: HandleMap<Instance> = None;
 pub static mut SESSIONS: HandleMap<Session> = None;
 pub static mut ACTIONS: HandleMap<Action> = None;
@@ -17,7 +17,8 @@ pub static mut ACTION_SETS: HandleMap<ActionSet> = None;
 
 pub struct Instance {
     pub handle: xr::Instance,
-    pub action_sets: Vec<Arc<RefCell<ActionSet>>>,
+    pub sessions: RwLock<Vec<Arc<Session>>>,
+    pub action_sets: RwLock<Vec<Arc<ActionSet>>>,
 
     pub application_name: String,
     pub application_version: u32,
@@ -36,14 +37,14 @@ pub struct Instance {
 #[derive(Debug)]
 pub struct Session {
     pub handle: xr::Session,
-    pub instance: Weak<RefCell<Instance>>,
+    pub instance: Weak<Instance>,
 }
 
 #[derive(Debug)]
 pub struct ActionSet {
     pub handle: xr::ActionSet,
-    pub instance: Weak<RefCell<Instance>>,
-    pub actions: Vec<Arc<RefCell<Action>>>,
+    pub instance: Weak<Instance>,
+    pub actions: RwLock<Vec<Arc<Action>>>,
 
     pub name: String,
     pub localized_name: String,
@@ -53,7 +54,7 @@ pub struct ActionSet {
 #[derive(Debug)]
 pub struct Action {
     pub handle: xr::Action,
-    pub action_set: Weak<RefCell<ActionSet>>, 
+    pub action_set: Weak<ActionSet>, 
     pub name: String,
     pub action_type: xr::ActionType,
     pub subaction_paths: Vec<xr::Path>,
@@ -110,7 +111,8 @@ impl Instance {
         path: *mut xr::Path,
     ) -> xr::Result {
         unsafe {
-            (self.string_to_path)(self.handle, crate::util::str_to_cstr(path_string), path)
+            let str = CString::new(path_string).unwrap();
+            (self.string_to_path)(self.handle, str.as_ptr(), path)
         }
     }
 
@@ -153,12 +155,12 @@ impl Session {
         attach_info: *const xr::SessionActionSetsAttachInfo,
     ) -> xr::Result {
         unsafe {
-            (self.instance().try_borrow().unwrap().attach_session_action_sets)(self.handle, attach_info)
+            (self.instance().attach_session_action_sets)(self.handle, attach_info)
         }
     }
 
     #[inline]
-    pub fn instance(&self) -> Arc<RefCell<Instance>> {
+    pub fn instance(&self) -> Arc<Instance> {
         self.instance.upgrade().unwrap().clone()
     }
 
@@ -177,12 +179,12 @@ impl ActionSet {
         action: *mut xr::Action
     ) -> xr::Result {
         unsafe {
-            (self.instance().try_borrow().unwrap().create_action)(self.handle, create_info, action)
+            (self.instance().create_action)(self.handle, create_info, action)
         }
     }
 
     #[inline]
-    pub fn instance(&self) -> Arc<RefCell<Instance>> {
+    pub fn instance(&self) -> Arc<Instance> {
         self.instance.upgrade().unwrap().clone()
     }
 
@@ -195,7 +197,7 @@ impl ActionSet {
 
 impl Action {
     #[inline]
-    pub fn action_set(&self) -> Arc<RefCell<ActionSet>> {
+    pub fn action_set(&self) -> Arc<ActionSet> {
         self.action_set.upgrade().unwrap().clone()
     }
 

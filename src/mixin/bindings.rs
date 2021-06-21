@@ -13,8 +13,7 @@ pub unsafe extern "system" fn suggest_interaction_profile_bindings(
     instance: xr::Instance, 
     suggested_bindings: *const xr::InteractionProfileSuggestedBinding
 ) -> xr::Result {
-    let instance_rc = Instance::from_handle(instance);
-    let instance = instance_rc.try_borrow().unwrap();
+    let instance = Instance::from_handle(instance);
 
     let result = instance.suggest_interaction_profile_bindings(suggested_bindings);
 
@@ -37,11 +36,9 @@ pub unsafe extern "system" fn suggest_interaction_profile_bindings(
 
     if let Some(custom_bindings) = read_json::<bindings::Root>(&path_str) {
         if let Some(profile) = custom_bindings.profiles.get(&interaction_profile) {
-            for action_set_wr in &instance.action_sets {
-                let action_set_wr = action_set_wr.try_borrow().unwrap();
+            for action_set_wr in instance.action_sets.read().unwrap().iter() {
                 if let Some(action_set) = profile.action_sets.get(&action_set_wr.name) {
-                    for action_wr in &action_set_wr.actions {
-                        let action_wr = action_wr.try_borrow().unwrap();
+                    for action_wr in action_set_wr.actions.read().unwrap().iter() {
                         if let Some(action) = action_set.actions.get(&action_wr.name) {
                             action.binding.add_to_vec(&mut &mut all_bindings, &instance, action_wr.handle);
                         }
@@ -73,11 +70,9 @@ fn update_default_bindings(instance: &Instance, suggested_bindings: &[xr::Action
     let mut path_string = String::new();
 
     for suggested_binding in suggested_bindings {
-        let action_rc = Action::from_handle(suggested_binding.action);
-        let action = action_rc.try_borrow().unwrap();
+        let action = Action::from_handle(suggested_binding.action);
         instance.path_to_string(suggested_binding.binding, &mut path_string);
-        let action_set_rc = action.action_set();
-        let action_set_name = &action_set_rc.try_borrow().unwrap().name;
+        let action_set_name = &action.action_set().name;
         
         let action_set = match profile.action_sets.get_mut(action_set_name) {
             Some(action_set) => action_set,

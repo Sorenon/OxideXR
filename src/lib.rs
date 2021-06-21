@@ -12,10 +12,12 @@ use util::*;
 use openxr_sys as xr;
 use openxr_sys::pfn as pfn;
 
-use std::cell::RefCell;
 use std::os::raw::c_char;
 use std::ffi::CStr;
 use std::sync::Arc;
+use std::sync::RwLock;
+
+//TODO think of a good name
 
 #[no_mangle]
 pub unsafe extern "system" fn xrNegotiateLoaderApiLayerInterface(
@@ -66,9 +68,10 @@ unsafe extern "system" fn create_api_layer_instance(
     
     let application_info = &(*instance_info).application_info;
 
-    let wrapper = wrappers::Instance {
+    let wrapper = Arc::new(wrappers::Instance {
         handle: *instance,
-        action_sets: Vec::new(),
+        sessions: RwLock::new(Vec::new()),
+        action_sets: RwLock::new(Vec::new()),
 
         application_name: i8_arr_to_owned(&application_info.application_name),
         application_version: application_info.application_version,
@@ -82,10 +85,10 @@ unsafe extern "system" fn create_api_layer_instance(
         suggest_interaction_profile_bindings: std::mem::transmute(get_func(*instance, "xrSuggestInteractionProfileBindings").unwrap()),
         path_to_string: std::mem::transmute(get_func(*instance, "xrPathToString").unwrap()),
         string_to_path: std::mem::transmute(get_func(*instance, "xrStringToPath").unwrap()),
-    };
+    });
 
     //Add this instance to the wrapper map
-    INSTANCES.as_mut().unwrap().insert((*instance).into_raw(), Arc::new(RefCell::new(wrapper)));
+    INSTANCES.as_ref().unwrap().insert((*instance).into_raw(), wrapper);
 
     result
 }
