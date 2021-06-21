@@ -95,3 +95,115 @@ pub unsafe extern "system" fn create_action(
     
     result
 }
+
+/*
+START DESTRUCTORS
+*/
+
+pub unsafe extern "system" fn destroy_instance(
+    instance: xr::Instance
+) -> xr::Result {
+    let result = Instance::from_handle(instance).destroy_instance();
+
+    if result.into_raw() < 0 { return result; }
+
+    destroy_instance_internal(instance);
+
+    result
+}
+
+pub unsafe extern "system" fn destroy_session(
+    session: xr::Session
+) -> xr::Result {
+    let instance = Session::from_handle(session).instance();
+    
+    let result = instance.destroy_session(session);
+
+    if result.into_raw() < 0 { return result; }
+
+    let session = destroy_session_internal(session);
+
+    let mut vec = instance.sessions.write().unwrap();
+    let index = vec.iter().position(|s| Arc::ptr_eq(s, &session)).unwrap();
+    vec.swap_remove(index);
+
+    result
+}
+
+pub unsafe extern "system" fn destroy_action_set(
+    action_set: xr::ActionSet
+) -> xr::Result {
+    let instance = ActionSet::from_handle(action_set).instance();
+    
+    let result = instance.destroy_action_set(action_set);
+
+    if result.into_raw() < 0 { return result; }
+
+    let action_set = destroy_action_set_internal(action_set);
+
+    let mut vec = instance.action_sets.write().unwrap();
+    let index = vec.iter().position(|s| Arc::ptr_eq(s, &action_set)).unwrap();
+    vec.swap_remove(index);
+
+    result
+}
+
+pub unsafe extern "system" fn destroy_action(
+    action: xr::Action
+) -> xr::Result {
+    let action_set = Action::from_handle(action).action_set();
+    
+    let result = action_set.instance().destroy_action(action);
+
+    if result.into_raw() < 0 { return result; }
+
+    let action = destroy_action_internal(action);
+
+    let mut vec = action_set.actions.write().unwrap();
+    let index = vec.iter().position(|s| Arc::ptr_eq(s, &action)).unwrap();
+    vec.swap_remove(index);
+
+    result
+}
+
+fn destroy_instance_internal(handle: xr::Instance) {
+    let instance = unsafe { INSTANCES.as_ref() }.unwrap().remove(&handle.into_raw()).unwrap();
+
+    for session in instance.1.sessions.write().unwrap().iter() {
+        destroy_session_internal(session.handle);
+    }
+
+    for action_set in instance.1.action_sets.write().unwrap().iter() {
+        destroy_action_set_internal(action_set.handle);
+    }
+
+    println!("Destroyed {:?}", handle);
+}
+
+fn destroy_session_internal(handle: xr::Session) -> Arc<Session> {
+    let session = unsafe { SESSIONS.as_ref() }.unwrap().remove(&handle.into_raw()).unwrap().1;
+
+    println!("Destroyed {:?}", handle);
+
+    session
+}
+
+fn destroy_action_set_internal(handle: xr::ActionSet) -> Arc<ActionSet> {
+    let action_set = unsafe { ACTION_SETS.as_ref() }.unwrap().remove(&handle.into_raw()).unwrap().1;
+
+    for action in action_set.actions.write().unwrap().iter() {
+        destroy_action_internal(action.handle);
+    }
+
+    println!("Destroyed {:?}", handle);
+
+    action_set
+}
+
+fn destroy_action_internal(handle: xr::Action) -> Arc<Action> {
+    let action = unsafe { ACTIONS.as_ref() }.unwrap().remove(&handle.into_raw()).unwrap().1;
+
+    println!("Destroyed {:?}", handle);
+
+    action
+}

@@ -81,6 +81,12 @@ unsafe extern "system" fn create_api_layer_instance(
         create_session: std::mem::transmute(get_func(*instance, "xrCreateSession").unwrap()),
         create_action_set: std::mem::transmute(get_func(*instance, "xrCreateActionSet").unwrap()),
         create_action: std::mem::transmute(get_func(*instance, "xrCreateAction").unwrap()),
+
+        destroy_instance: std::mem::transmute(get_func(*instance, "xrDestroyInstance").unwrap()),
+        destroy_session: std::mem::transmute(get_func(*instance, "xrDestroySession").unwrap()),
+        destroy_action_set: std::mem::transmute(get_func(*instance, "xrDestroyActionSet").unwrap()),
+        destroy_action: std::mem::transmute(get_func(*instance, "xrDestroyAction").unwrap()),
+
         attach_session_action_sets: std::mem::transmute(get_func(*instance, "xrAttachSessionActionSets").unwrap()),
         suggest_interaction_profile_bindings: std::mem::transmute(get_func(*instance, "xrSuggestInteractionProfileBindings").unwrap()),
         path_to_string: std::mem::transmute(get_func(*instance, "xrPathToString").unwrap()),
@@ -106,6 +112,12 @@ unsafe extern "system" fn instance_proc_addr(instance: xr::Instance, name: *cons
             "xrCreateSession" => std::mem::transmute(mixin::create_session as pfn::CreateSession),
             "xrCreateActionSet" => std::mem::transmute(mixin::create_action_set as pfn::CreateActionSet),
             "xrCreateAction" => std::mem::transmute(mixin::create_action as pfn::CreateAction),
+
+            "xrDestroyInstance" => std::mem::transmute(mixin::destroy_instance as pfn::DestroyInstance),
+            "xrDestroySession" => std::mem::transmute(mixin::destroy_session as pfn::DestroySession),
+            "xrDestroyActionSet" => std::mem::transmute(mixin::destroy_action_set as pfn::DestroyActionSet),
+            "xrDestroyAction" => std::mem::transmute(mixin::destroy_action as pfn::DestroyAction),
+            
             "xrSuggestInteractionProfileBindings" => std::mem::transmute(mixin::bindings::suggest_interaction_profile_bindings as pfn::SuggestInteractionProfileBindings),
             "xrAttachSessionActionSets" => std::mem::transmute(mixin::actions::attach_session_action_sets as pfn::AttachSessionActionSets),
             _ => (*function).unwrap()

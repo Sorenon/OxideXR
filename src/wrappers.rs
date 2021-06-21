@@ -25,9 +25,16 @@ pub struct Instance {
     pub engine_name: String,
     pub engine_version: u32,
 
+
     pub create_session: pfn::CreateSession,
     pub create_action_set: pfn::CreateActionSet,
     pub create_action: pfn::CreateAction,
+
+    pub destroy_instance: pfn::DestroyInstance,
+    pub destroy_session: pfn::DestroySession,
+    pub destroy_action_set: pfn::DestroyActionSet,
+    pub destroy_action: pfn::DestroyAction,
+
     pub attach_session_action_sets: pfn::AttachSessionActionSets,
     pub suggest_interaction_profile_bindings: pfn::SuggestInteractionProfileBindings,
     pub path_to_string: pfn::PathToString,
@@ -113,6 +120,45 @@ impl Instance {
         unsafe {
             let str = CString::new(path_string).unwrap();
             (self.string_to_path)(self.handle, str.as_ptr(), path)
+        }
+    }
+
+    #[inline]
+    pub fn destroy_instance(
+        &self
+    ) -> xr::Result {
+        unsafe {
+            (self.destroy_instance)(self.handle)
+        }
+    }
+
+    #[inline]
+    pub fn destroy_session(
+        &self,
+        session: xr::Session
+    ) -> xr::Result {
+        unsafe {
+            (self.destroy_session)(session)
+        }
+    }
+
+    #[inline]
+    pub fn destroy_action_set(
+        &self,
+        action_set: xr::ActionSet
+    ) -> xr::Result {
+        unsafe {
+            (self.destroy_action_set)(action_set)
+        }
+    }
+
+    #[inline]
+    pub fn destroy_action(
+        &self,
+        action: xr::Action
+    ) -> xr::Result {
+        unsafe {
+            (self.destroy_action)(action)
         }
     }
 
