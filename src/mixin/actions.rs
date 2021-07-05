@@ -57,8 +57,7 @@ fn update_application_actions(instance: &Instance, action_set_handles: &[xr::Act
                     localized_name: action.localized_name.clone(),
                     action_type: actions::ActionType::from_xr(action.action_type),
                     subaction_paths: action.subaction_paths.iter().map(|path| -> String {
-                        instance.path_to_string(path.clone(), &mut path_string);
-                        path_string.clone()
+                        instance.path_to_str(path.clone(), &mut path_string).unwrap().clone()
                     }).collect()
                 }
             );

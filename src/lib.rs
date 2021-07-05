@@ -17,8 +17,6 @@ use std::ffi::CStr;
 use std::sync::Arc;
 use std::sync::RwLock;
 
-//TODO think of a good name
-
 #[no_mangle]
 pub unsafe extern "system" fn xrNegotiateLoaderApiLayerInterface(
     _: *const XrNegotiateLoaderInfo, 

@@ -23,7 +23,12 @@ pub fn get_uuid(application_name: &str) -> String {
     match applications.map.get(application_name) {
         Some(id) => id.clone(),
         None => {
-            let id = uuid::Uuid::new_v4().to_simple().to_string();
+            let mut id = uuid::Uuid::new_v4().to_simple().to_string();
+
+            while applications.map.contains_key(&id) {
+                id = uuid::Uuid::new_v4().to_simple().to_string();
+            }
+
             applications.map.insert(application_name.to_owned(), id.clone());
             write_json(&applications, Path::new(APPLICATIONS));
             id
@@ -55,7 +60,7 @@ pub fn write_json<T>(value: &T, path: &Path) where T: Serialize {
 
     if let Some(path) = path.parent() {
         if let Err(why) = fs::create_dir_all(path) {
-            panic!("couldn't create directory {}", why);
+            panic!("couldn't create directory {}: {}", path.display(), why);
         }
     }
 

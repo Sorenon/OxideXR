@@ -8,7 +8,7 @@ use std::sync::Weak;
 use std::sync::Arc;
 
 type HandleMap<T> = Option<DashMap<u64, Arc<T>>>;
-type DashRef<'a, T> = dashmap::mapref::one::Ref<'a, u64, Arc<T>>;
+type HandleRef<'a, T> = dashmap::mapref::one::Ref<'a, u64, Arc<T>>;
 
 pub static mut INSTANCES: HandleMap<Instance> = None;
 pub static mut SESSIONS: HandleMap<Session> = None;
@@ -24,7 +24,6 @@ pub struct Instance {
     pub application_version: u32,
     pub engine_name: String,
     pub engine_version: u32,
-
 
     pub create_session: pfn::CreateSession,
     pub create_action_set: pfn::CreateActionSet,
@@ -63,6 +62,7 @@ pub struct Action {
     pub handle: xr::Action,
     pub action_set: Weak<ActionSet>, 
     pub name: String,
+
     pub action_type: xr::ActionType,
     pub subaction_paths: Vec<xr::Path>,
     pub localized_name: String,
@@ -162,32 +162,58 @@ impl Instance {
         }
     }
 
-    pub fn path_to_string(
+    pub fn path_to_str<'a>(
         &self, 
         path: xr::Path,
-        string: &mut String
-    ) -> xr::Result {
+        string: &'a mut String
+    ) -> Result<&'a String, xr::Result> {
         unsafe {
             let mut len = 0;
             let result = (self.path_to_string)(self.handle, path, 0, std::ptr::addr_of_mut!(len), std::ptr::null_mut());
-            if result.into_raw() < 0 { return result; }
+            if result.into_raw() < 0 { return Err(result); }
             
             let mut buffer = Vec::<i8>::with_capacity(len as usize);
             buffer.set_len(len as usize);
     
             let result = (self.path_to_string)(self.handle, path, len, std::ptr::addr_of_mut!(len), buffer.as_mut_ptr());
-            if result.into_raw() < 0 { return result; }
+            if result.into_raw() < 0 { return Err(result); }
 
             let slice = std::str::from_utf8(std::mem::transmute(&buffer[..len as usize - 1])).unwrap();
             string.clear();
             string.reserve(slice.len());
             string.insert_str(0, slice);
 
-            result
+            Ok(string)
         }
     }
 
-    pub fn from_handle<'a>(handle: xr::Instance) -> DashRef<'a, Instance> {
+    pub fn path_to_string(
+        &self, 
+        path: xr::Path,
+    ) -> Result<String, xr::Result> {
+        unsafe {
+            let mut string = String::new();
+
+            let mut len = 0;
+            let result = (self.path_to_string)(self.handle, path, 0, std::ptr::addr_of_mut!(len), std::ptr::null_mut());
+            if result.into_raw() < 0 { return Err(result); }
+            
+            let mut buffer = Vec::<i8>::with_capacity(len as usize);
+            buffer.set_len(len as usize);
+    
+            let result = (self.path_to_string)(self.handle, path, len, std::ptr::addr_of_mut!(len), buffer.as_mut_ptr());
+            if result.into_raw() < 0 { return Err(result); }
+
+            let slice = std::str::from_utf8(std::mem::transmute(&buffer[..len as usize - 1])).unwrap();
+            string.clear();
+            string.reserve(slice.len());
+            string.insert_str(0, slice);
+
+            Ok(string)
+        }
+    }
+
+    pub fn from_handle<'a>(handle: xr::Instance) -> HandleRef<'a, Instance> {
         unsafe {
             INSTANCES.as_ref().unwrap().get(&handle.into_raw()).unwrap()
         }
@@ -210,7 +236,7 @@ impl Session {
         self.instance.upgrade().unwrap().clone()
     }
 
-    pub fn from_handle<'a>(handle: xr::Session) -> DashRef<'a, Session>  {
+    pub fn from_handle<'a>(handle: xr::Session) -> HandleRef<'a, Session>  {
         unsafe {
             SESSIONS.as_ref().unwrap().get(&handle.into_raw()).unwrap()
         }
@@ -234,7 +260,7 @@ impl ActionSet {
         self.instance.upgrade().unwrap().clone()
     }
 
-    pub fn from_handle<'a>(handle: xr::ActionSet) -> DashRef<'a, ActionSet> {
+    pub fn from_handle<'a>(handle: xr::ActionSet) -> HandleRef<'a, ActionSet> {
         unsafe {
             ACTION_SETS.as_ref().unwrap().get(&handle.into_raw()).unwrap()
         }
@@ -247,7 +273,7 @@ impl Action {
         self.action_set.upgrade().unwrap().clone()
     }
 
-    pub fn from_handle<'a>(handle: xr::Action) -> DashRef<'a, Action> {
+    pub fn from_handle<'a>(handle: xr::Action) -> HandleRef<'a, Action> {
         unsafe {
             ACTIONS.as_ref().unwrap().get(&handle.into_raw()).unwrap()
         }

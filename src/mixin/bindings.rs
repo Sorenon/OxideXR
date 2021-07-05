@@ -15,63 +15,65 @@ pub unsafe extern "system" fn suggest_interaction_profile_bindings(
 ) -> xr::Result {
     let instance = Instance::from_handle(instance);
 
-    let result = instance.suggest_interaction_profile_bindings(suggested_bindings);
+    let mut result = instance.suggest_interaction_profile_bindings(suggested_bindings);
 
-    let mut interaction_profile = String::new();
-    instance.path_to_string((*suggested_bindings).interaction_profile, &mut interaction_profile);
+    let interaction_profile = instance.path_to_string((*suggested_bindings).interaction_profile).unwrap();
 
     if result.into_raw() >= 0 {
-        update_default_bindings(
+        update_default_bindings_file(
             &instance, 
             std::slice::from_raw_parts((*suggested_bindings).suggested_bindings, (*suggested_bindings).count_suggested_bindings as usize),
             &interaction_profile
         );
     } else {
-        //should we return here to let the application know its bindings are invalid?
+        return result;
     }
 
-    let path_str = format!("{}{}/bindings/custom_bindings.json", CONFIG_DIR, get_uuid(&instance.application_name));
+    let file_path = format!("{}{}/bindings/custom_bindings.json", CONFIG_DIR, get_uuid(&instance.application_name));
 
-    let mut all_bindings = Vec::<xr::ActionSuggestedBinding>::new();
+    if let Some(custom_bindings_val) = read_json::<bindings::Root>(&file_path) {
+        if let Some(profile_val) = custom_bindings_val.profiles.get(&interaction_profile) {
 
-    if let Some(custom_bindings) = read_json::<bindings::Root>(&path_str) {
-        if let Some(profile) = custom_bindings.profiles.get(&interaction_profile) {
-            for action_set_wr in instance.action_sets.read().unwrap().iter() {
-                if let Some(action_set) = profile.action_sets.get(&action_set_wr.name) {
-                    for action_wr in action_set_wr.actions.read().unwrap().iter() {
-                        if let Some(action) = action_set.actions.get(&action_wr.name) {
-                            action.binding.add_to_vec(&mut &mut all_bindings, &instance, action_wr.handle);
+            let mut custom_bindings = Vec::<xr::ActionSuggestedBinding>::new();
+
+            for action_set in instance.action_sets.read().unwrap().iter() {
+                if let Some(action_set_val) = profile_val.action_sets.get(&action_set.name) {
+
+                    for action in action_set.actions.read().unwrap().iter() {
+                        if let Some(action_val) = action_set_val.actions.get(&action.name) {
+                            action_val.binding.add_to_vec(&mut custom_bindings, &instance, action.handle);
                         }
                     }
                 }
             }
+
+            let mut custom_suggested_bindings = (*suggested_bindings).clone();
+            custom_suggested_bindings.suggested_bindings = custom_bindings.as_ptr();
+            custom_suggested_bindings.count_suggested_bindings = custom_bindings.len() as u32;
+        
+            result = instance.suggest_interaction_profile_bindings(std::ptr::addr_of!(custom_suggested_bindings));
         }
     }
 
-    let mut custom_suggested_bindings = (*suggested_bindings).clone();
-    custom_suggested_bindings.suggested_bindings = all_bindings.as_ptr();
-    custom_suggested_bindings.count_suggested_bindings = all_bindings.len() as u32;
-
-    let result = instance.suggest_interaction_profile_bindings(std::ptr::addr_of!(custom_suggested_bindings));
-    
     result
 }
 
-fn update_default_bindings(instance: &Instance, suggested_bindings: &[xr::ActionSuggestedBinding], interaction_profile: &str) {
-    let path_str = format!("{}{}/default_bindings.json", CONFIG_DIR, get_uuid(&instance.application_name));
+fn update_default_bindings_file(instance: &Instance, suggested_bindings: &[xr::ActionSuggestedBinding], interaction_profile: &str) {
+    let file_path = format!("{}{}/default_bindings.json", CONFIG_DIR, get_uuid(&instance.application_name));
 
-    let mut default_bindings = match read_json(&path_str) {
+    println!("{}", file_path);
+
+    let mut default_bindings = match read_json(&file_path) {
         Some(default_bindings) => default_bindings,
         None => bindings::Root::default(),
     };
 
     let mut profile = bindings::InteractionProfile::default();
 
-    let mut path_string = String::new();
-
     for suggested_binding in suggested_bindings {
+        let binding_string = instance.path_to_string(suggested_binding.binding).unwrap();
+
         let action = Action::from_handle(suggested_binding.action);
-        instance.path_to_string(suggested_binding.binding, &mut path_string);
         let action_set_name = &action.action_set().name;
         
         let action_set = match profile.action_sets.get_mut(action_set_name) {
@@ -85,18 +87,18 @@ fn update_default_bindings(instance: &Instance, suggested_bindings: &[xr::Action
 
         match action_set.actions.get_mut(&action.name) {
             Some(action) => match &mut action.binding {
-                    bindings::BindingType::Binding(binding) => action.binding = bindings::BindingType::Bindings(vec![binding.clone(), path_string.clone()]),
-                    bindings::BindingType::Bindings(bindings) => bindings.push(path_string.clone()),
+                    bindings::BindingType::Binding(binding) => action.binding = bindings::BindingType::Bindings(vec![binding.clone(), binding_string]),
+                    bindings::BindingType::Bindings(bindings) => bindings.push(binding_string),
                 },
             None => {
                 action_set.actions.insert(action.name.clone(), bindings::Action {
-                    binding: bindings::BindingType::Binding(path_string.clone()),
+                    binding: bindings::BindingType::Binding(binding_string),
                 });
             },
         }        
     }
 
     default_bindings.profiles.insert(interaction_profile.to_owned(), profile);
-    
-    write_json(&default_bindings, &Path::new(&path_str));
+
+    write_json(&default_bindings, &Path::new(&file_path));
 }
