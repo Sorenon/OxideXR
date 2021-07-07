@@ -1,10 +1,9 @@
 mod loader_interfaces;
 mod wrappers;
 mod serial;
-mod mixin;
+mod injections;
 mod util;
 
-use dashmap::DashMap;
 use wrappers::*;
 use loader_interfaces::*;
 use util::*;
@@ -26,17 +25,12 @@ pub unsafe extern "system" fn xrNegotiateLoaderApiLayerInterface(
 {
     assert_eq!(LAYER_NAME, CStr::from_ptr(layer_name).to_str().unwrap());
 
-    (*api_layer_request).layer_interface_version = 1; 
+    (*api_layer_request).layer_interface_version = LAYER_VERSION; 
     (*api_layer_request).layer_api_version = xr::CURRENT_API_VERSION; 
     (*api_layer_request).get_instance_proc_addr = Some(instance_proc_addr);
     (*api_layer_request).create_api_layer_instance = Some(create_api_layer_instance);
 
-    if INSTANCES.is_none() {
-        INSTANCES = Some(DashMap::new());
-        SESSIONS = Some(DashMap::new());
-        ACTIONS = Some(DashMap::new());
-        ACTION_SETS = Some(DashMap::new());
-    }
+    wrappers::static_init();
 
     xr::Result::SUCCESS
 }
@@ -66,7 +60,7 @@ unsafe extern "system" fn create_api_layer_instance(
     
     let application_info = &(*instance_info).application_info;
 
-    let wrapper = Arc::new(wrappers::Instance {
+    let wrapper = Arc::new(wrappers::InstanceWrapper {
         handle: *instance,
         sessions: RwLock::new(Vec::new()),
         action_sets: RwLock::new(Vec::new()),
@@ -92,7 +86,7 @@ unsafe extern "system" fn create_api_layer_instance(
     });
 
     //Add this instance to the wrapper map
-    INSTANCES.as_ref().unwrap().insert((*instance).into_raw(), wrapper);
+    instances().insert((*instance).into_raw(), wrapper);
 
     result
 }
@@ -107,17 +101,17 @@ unsafe extern "system" fn instance_proc_addr(instance: xr::Instance, name: *cons
 
     (*function) = Some(
         match name {
-            "xrCreateSession" => std::mem::transmute(mixin::create_session as pfn::CreateSession),
-            "xrCreateActionSet" => std::mem::transmute(mixin::create_action_set as pfn::CreateActionSet),
-            "xrCreateAction" => std::mem::transmute(mixin::create_action as pfn::CreateAction),
+            "xrCreateSession" => std::mem::transmute(injections::create_session as pfn::CreateSession),
+            "xrCreateActionSet" => std::mem::transmute(injections::create_action_set as pfn::CreateActionSet),
+            "xrCreateAction" => std::mem::transmute(injections::create_action as pfn::CreateAction),
 
-            "xrDestroyInstance" => std::mem::transmute(mixin::destroy_instance as pfn::DestroyInstance),
-            "xrDestroySession" => std::mem::transmute(mixin::destroy_session as pfn::DestroySession),
-            "xrDestroyActionSet" => std::mem::transmute(mixin::destroy_action_set as pfn::DestroyActionSet),
-            "xrDestroyAction" => std::mem::transmute(mixin::destroy_action as pfn::DestroyAction),
+            "xrDestroyInstance" => std::mem::transmute(injections::destroy_instance as pfn::DestroyInstance),
+            "xrDestroySession" => std::mem::transmute(injections::destroy_session as pfn::DestroySession),
+            "xrDestroyActionSet" => std::mem::transmute(injections::destroy_action_set as pfn::DestroyActionSet),
+            "xrDestroyAction" => std::mem::transmute(injections::destroy_action as pfn::DestroyAction),
             
-            "xrSuggestInteractionProfileBindings" => std::mem::transmute(mixin::bindings::suggest_interaction_profile_bindings as pfn::SuggestInteractionProfileBindings),
-            "xrAttachSessionActionSets" => std::mem::transmute(mixin::actions::attach_session_action_sets as pfn::AttachSessionActionSets),
+            "xrSuggestInteractionProfileBindings" => std::mem::transmute(injections::bindings::suggest_interaction_profile_bindings as pfn::SuggestInteractionProfileBindings),
+            "xrAttachSessionActionSets" => std::mem::transmute(injections::actions::attach_session_action_sets as pfn::AttachSessionActionSets),
             _ => (*function).unwrap()
         }
     );

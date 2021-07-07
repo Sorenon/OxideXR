@@ -1,5 +1,5 @@
 [package]
-name = "oxidexr"
+name = "oxidexr-layer"
 version = "0.1.0"
 authors = ["sorenon <sorenonandstuffs@gmail.com>"]
 edition = "2018"
@@ -9,6 +9,8 @@ edition = "2018"
 [lib]
 crate-type = ["cdylib"]
 bench = false
+path = "src/layer/lib.rs"
+
 
 [dependencies]
 openxr-sys = "0.8"

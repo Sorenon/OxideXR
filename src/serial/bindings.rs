@@ -36,29 +36,7 @@ pub enum BindingType {
 }
 
 impl BindingType {
-    // pub fn for_binding(&self, all_bindings: &mut Vec<openxr_sys::ActionSuggestedBinding>, instance: &wrappers::Instance, handle: openxr_sys::Action) {
-    //     fn inner(binding: &str, all_bindings: &mut Vec<openxr_sys::ActionSuggestedBinding>, instance: &wrappers::Instance, handle: openxr_sys::Action) {
-    //         let mut path = openxr_sys::Path::from_raw(0);
-    //         instance.string_to_path(binding, std::ptr::addr_of_mut!(path));
-    //         all_bindings.push(openxr_sys::ActionSuggestedBinding{
-    //             action: handle,
-    //             binding: path,
-    //         });
-    //     }
-
-    //     match &self {
-    //         BindingType::Binding(binding) => {
-    //             inner(binding, all_bindings, instance, handle)
-    //         },
-    //         BindingType::Bindings(bindings) => {
-    //             for binding in bindings {
-    //                 inner(binding, all_bindings, instance, handle)
-    //             }
-    //         },
-    //     }
-    // }
-
-    pub fn add_to_vec(&self, all_bindings: &mut Vec<openxr_sys::ActionSuggestedBinding>, instance: &wrappers::Instance, handle: openxr_sys::Action) {
+    pub fn add_to_vec(&self, all_bindings: &mut Vec<openxr_sys::ActionSuggestedBinding>, instance: &wrappers::InstanceWrapper, handle: openxr_sys::Action) {
         let mut inner = |binding: &str| {
             let mut path = openxr_sys::Path::from_raw(0);
             instance.string_to_path(binding, std::ptr::addr_of_mut!(path));

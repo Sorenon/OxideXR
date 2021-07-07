@@ -2,7 +2,7 @@
     "file_format_version" : "1.0.0",
     "api_layer": {
         "name": "XR_APILAYER_BULLCH_oxidexr",
-        "library_path": "C:\\Users\\soren\\Documents\\Programming\\rust\\oxidexr\\target\\debug\\oxidexr.dll",
+        "library_path": "C:\\Users\\soren\\Documents\\Programming\\rust\\oxidexr\\target\\debug\\oxidexr_layer.dll",
         "api_version" : "1.0",
         "implementation_version" : "1",
         "description" : "im a description",

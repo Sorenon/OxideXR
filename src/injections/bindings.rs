@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::serial::CONFIG_DIR;
+use super::serial::CONFIG_DIR;
 use crate::serial::bindings;
 use crate::serial::read_json;
 use crate::serial::get_uuid;
@@ -13,7 +13,7 @@ pub unsafe extern "system" fn suggest_interaction_profile_bindings(
     instance: xr::Instance, 
     suggested_bindings: *const xr::InteractionProfileSuggestedBinding
 ) -> xr::Result {
-    let instance = Instance::from_handle(instance);
+    let instance = InstanceWrapper::from_handle(instance);
 
     let mut result = instance.suggest_interaction_profile_bindings(suggested_bindings);
 
@@ -58,7 +58,7 @@ pub unsafe extern "system" fn suggest_interaction_profile_bindings(
     result
 }
 
-fn update_default_bindings_file(instance: &Instance, suggested_bindings: &[xr::ActionSuggestedBinding], interaction_profile: &str) {
+fn update_default_bindings_file(instance: &InstanceWrapper, suggested_bindings: &[xr::ActionSuggestedBinding], interaction_profile: &str) {
     let file_path = format!("{}{}/default_bindings.json", CONFIG_DIR, get_uuid(&instance.application_name));
 
     println!("{}", file_path);
@@ -73,7 +73,7 @@ fn update_default_bindings_file(instance: &Instance, suggested_bindings: &[xr::A
     for suggested_binding in suggested_bindings {
         let binding_string = instance.path_to_string(suggested_binding.binding).unwrap();
 
-        let action = Action::from_handle(suggested_binding.action);
+        let action = ActionWrapper::from_handle(suggested_binding.action);
         let action_set_name = &action.action_set().name;
         
         let action_set = match profile.action_sets.get_mut(action_set_name) {

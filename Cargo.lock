@@ -127,7 +127,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxidexr"
+name = "oxidexr-layer"
 version = "0.1.0"
 dependencies = [
  "dashmap",
@@ -203,9 +203,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "1.0.73"
+version = "1.0.65"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f71489ff30030d2ae598524f61326b902466f72a0fb1a8564c001cc63425bcc7"
+checksum = "f3a1d708c221c5a612956ef9f75b37e454e88d1f7b899fbd3a18d4252012d663"
 dependencies = [
  "proc-macro2",
  "quote",
