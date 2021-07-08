@@ -1,6 +1,5 @@
 mod loader_interfaces;
 mod wrappers;
-mod serial;
 mod injections;
 mod util;
 

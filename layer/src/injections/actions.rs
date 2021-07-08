@@ -1,10 +1,11 @@
+use std::collections::HashMap;
 use std::path::Path;
 
-use crate::serial::CONFIG_DIR;
-use crate::serial::actions::*;
-use crate::serial::get_uuid;
-use crate::serial::read_json;
-use crate::serial::write_json;
+use common::serial::CONFIG_DIR;
+use common::xrapplication_info::*;
+use common::serial::get_uuid;
+use common::serial::read_json;
+use common::serial::write_json;
 use crate::wrappers::*;
 
 use openxr_sys as xr;
@@ -40,8 +41,32 @@ fn update_application_actions(instance: &InstanceWrapper, action_set_handles: &[
 
     for action_set in action_set_handles {
         let action_set_wrapper = ActionSetWrapper::from_handle(action_set.clone());
-        application_actions.action_sets.insert(action_set_wrapper.name.clone(), ActionSetInfo::from_wrapper(&action_set_wrapper));
+        application_actions.action_sets.insert(action_set_wrapper.name.clone(), set_info_from_wrapper(&action_set_wrapper));
     }
 
     write_json(&application_actions, &Path::new(&path_str));
+}
+
+fn set_info_from_wrapper(wrapper: &ActionSetWrapper) -> ActionSetInfo {
+    let mut action_set_info = ActionSetInfo {
+        localized_name: wrapper.localized_name.clone(),
+        actions: HashMap::new(),
+    };
+
+    let instance = wrapper.instance();
+    
+    for action_wrapper in wrapper.actions.read().unwrap().iter() {
+        action_set_info.actions.insert(
+            action_wrapper.name.clone(),
+            ActionInfo {
+                localized_name: action_wrapper.localized_name.clone(),
+                action_type: ActionType::from_xr(action_wrapper.action_type),
+                subaction_paths: action_wrapper.subaction_paths.iter().map(|path| -> String {
+                    instance.path_to_string(path.clone()).unwrap()
+                }).collect()
+            }
+        );
+    }
+
+    action_set_info
 }

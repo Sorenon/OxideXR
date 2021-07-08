@@ -1,6 +1,3 @@
-pub mod bindings;
-pub mod actions;
-
 use std::{collections::HashMap, fs, path::Path};
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};

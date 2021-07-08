@@ -1,10 +1,10 @@
 use std::path::Path;
 
-use super::serial::CONFIG_DIR;
-use crate::serial::bindings;
-use crate::serial::read_json;
-use crate::serial::get_uuid;
-use crate::serial::write_json;
+use common::serial::CONFIG_DIR;
+use common::bindings_config::*;
+use common::serial::read_json;
+use common::serial::get_uuid;
+use common::serial::write_json;
 use crate::wrappers::*;
 
 use openxr_sys as xr;
@@ -31,7 +31,7 @@ pub unsafe extern "system" fn suggest_interaction_profile_bindings(
 
     let file_path = format!("{}{}/bindings/custom_bindings.json", CONFIG_DIR, get_uuid(&instance.application_name));
 
-    if let Some(custom_bindings_val) = read_json::<bindings::Root>(&file_path) {
+    if let Some(custom_bindings_val) = read_json::<BindingsConfig>(&file_path) {
         if let Some(profile_val) = custom_bindings_val.profiles.get(&interaction_profile) {
 
             let mut custom_bindings = Vec::<xr::ActionSuggestedBinding>::new();
@@ -41,7 +41,24 @@ pub unsafe extern "system" fn suggest_interaction_profile_bindings(
 
                     for action in action_set.actions.read().unwrap().iter() {
                         if let Some(action_val) = action_set_val.actions.get(&action.name) {
-                            action_val.binding.add_to_vec(&mut custom_bindings, &instance, action.handle);
+
+                            let mut inner = |binding: &str| {
+                                let mut path = xr::Path::from_raw(0);
+                                instance.string_to_path(binding, std::ptr::addr_of_mut!(path));
+                                custom_bindings.push(xr::ActionSuggestedBinding{
+                                    action: action.handle,
+                                    binding: path,
+                                });
+                            };
+                    
+                            match &action_val.binding {
+                                BindingType::Binding(binding) => inner(binding),
+                                BindingType::Bindings(bindings) => {
+                                    for binding in bindings {
+                                        inner(binding);
+                                    }
+                                },
+                            }
                         }
                     }
                 }
@@ -65,10 +82,10 @@ fn update_default_bindings_file(instance: &InstanceWrapper, suggested_bindings: 
 
     let mut default_bindings = match read_json(&file_path) {
         Some(default_bindings) => default_bindings,
-        None => bindings::Root::default(),
+        None => BindingsConfig::default(),
     };
 
-    let mut profile = bindings::InteractionProfile::default();
+    let mut profile = InteractionProfileBindings::default();
 
     for suggested_binding in suggested_bindings {
         let binding_string = instance.path_to_string(suggested_binding.binding).unwrap();
@@ -79,7 +96,7 @@ fn update_default_bindings_file(instance: &InstanceWrapper, suggested_bindings: 
         let action_set = match profile.action_sets.get_mut(action_set_name) {
             Some(action_set) => action_set,
             None => {
-                let action_set = bindings::ActionSet::default();
+                let action_set = ActionSetBindings::default();
                 profile.action_sets.insert(action_set_name.clone(), action_set);
                 profile.action_sets.get_mut(action_set_name).unwrap()
             },
@@ -87,12 +104,12 @@ fn update_default_bindings_file(instance: &InstanceWrapper, suggested_bindings: 
 
         match action_set.actions.get_mut(&action.name) {
             Some(action) => match &mut action.binding {
-                    bindings::BindingType::Binding(binding) => action.binding = bindings::BindingType::Bindings(vec![binding.clone(), binding_string]),
-                    bindings::BindingType::Bindings(bindings) => bindings.push(binding_string),
+                    BindingType::Binding(binding) => action.binding = BindingType::Bindings(vec![binding.clone(), binding_string]),
+                    BindingType::Bindings(bindings) => bindings.push(binding_string),
                 },
             None => {
-                action_set.actions.insert(action.name.clone(), bindings::Action {
-                    binding: bindings::BindingType::Binding(binding_string),
+                action_set.actions.insert(action.name.clone(), ActionBindings {
+                    binding: BindingType::Binding(binding_string),
                 });
             },
         }        

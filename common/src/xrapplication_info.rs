@@ -2,8 +2,6 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::wrappers::ActionSetWrapper;
-
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct XrApplicationInfo {
     pub application_name: String,
@@ -53,31 +51,5 @@ impl ActionType {
             openxr_sys::ActionType::VIBRATION_OUTPUT => ActionType::VibrationOutput,
             _ => ActionType::Unknown
         }
-    }
-}
-
-impl ActionSetInfo {
-    pub fn from_wrapper(wrapper: &ActionSetWrapper) -> ActionSetInfo {
-        let mut action_set_info = ActionSetInfo {
-            localized_name: wrapper.localized_name.clone(),
-            actions: HashMap::new(),
-        };
-
-        let instance = wrapper.instance();
-        
-        for action_wrapper in wrapper.actions.read().unwrap().iter() {
-            action_set_info.actions.insert(
-                action_wrapper.name.clone(),
-                ActionInfo {
-                    localized_name: action_wrapper.localized_name.clone(),
-                    action_type: ActionType::from_xr(action_wrapper.action_type),
-                    subaction_paths: action_wrapper.subaction_paths.iter().map(|path| -> String {
-                        instance.path_to_string(path.clone()).unwrap()
-                    }).collect()
-                }
-            );
-        }
-
-        action_set_info
     }
 }
