@@ -84,6 +84,12 @@ unsafe extern "system" fn create_api_layer_instance(
         string_to_path: std::mem::transmute(get_func(*instance, "xrStringToPath").unwrap()),
     });
 
+    let name = wrapper.application_name.clone();
+    std::thread::spawn(move || {
+        std::process::Command::new("C:\\Users\\soren\\Documents\\Programming\\rust\\oxidexr\\target\\debug\\gui.exe").arg(name).output().unwrap();
+
+    });
+
     //Add this instance to the wrapper map
     instances().insert((*instance).into_raw(), wrapper);
 

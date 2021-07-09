@@ -9,6 +9,6 @@ crate-type = ["cdylib"]
 bench = false
 
 [dependencies]
-openxr-sys = "0.8"
+openxr-sys = "0.9"
 dashmap = "4.0"
 common = { path = "../common" }

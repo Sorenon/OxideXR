@@ -1,5 +1,6 @@
 [workspace]
 members = [
     "layer",
-    "common"
+    "common",
+    "gui"
 ]
