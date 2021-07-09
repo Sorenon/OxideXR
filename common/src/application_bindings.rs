@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
-pub struct BindingsConfig {
+pub struct ApplicationBindings {
     #[serde(flatten)]
     pub profiles: HashMap<String, InteractionProfileBindings>,
 }
@@ -35,7 +35,7 @@ pub enum BindingType {
 
 #[test]
 fn test_json(){
-    let mut profiles = BindingsConfig {
+    let mut profiles = ApplicationBindings {
         profiles: HashMap::new(),
     };
 

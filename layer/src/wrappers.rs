@@ -1,3 +1,4 @@
+use common::xrapplication_info::XrApplicationInfo;
 use dashmap::DashMap;
 use openxr_sys as xr;
 use openxr_sys::pfn as pfn;
@@ -6,6 +7,7 @@ use std::ffi::CString;
 use std::sync::RwLock;
 use std::sync::Weak;
 use std::sync::Arc;
+use std::thread;
 
 type HandleMap<T> = DashMap<u64, Arc<T>>;
 type HandleRef<'a, T> = dashmap::mapref::one::Ref<'a, u64, Arc<T>>;
@@ -57,6 +59,10 @@ pub struct InstanceWrapper {
     pub application_version: u32,
     pub engine_name: String,
     pub engine_version: u32,
+
+    pub application_info: RwLock<XrApplicationInfo>,
+    pub gui: RwLock<Option<Arc<crate::gui::BindingsGUI>>>,
+    pub gui_thread: Option<std::thread::Thread>,
 
     pub create_session: pfn::CreateSession,
     pub create_action_set: pfn::CreateActionSet,

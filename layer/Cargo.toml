@@ -9,6 +9,9 @@ crate-type = ["cdylib"]
 bench = false
 
 [dependencies]
-openxr-sys = "0.8"
+openxr-sys = "0.9"
 dashmap = "4.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+iced = { git = "https://github.com/Sorenon/iced", tag = "0.3.0-any_thread" }
 common = { path = "../common" }

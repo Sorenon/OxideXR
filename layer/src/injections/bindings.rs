@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use common::serial::CONFIG_DIR;
-use common::bindings_config::*;
+use common::application_bindings::*;
 use common::serial::read_json;
 use common::serial::get_uuid;
 use common::serial::write_json;
@@ -31,7 +31,7 @@ pub unsafe extern "system" fn suggest_interaction_profile_bindings(
 
     let file_path = format!("{}{}/bindings/custom_bindings.json", CONFIG_DIR, get_uuid(&instance.application_name));
 
-    if let Some(custom_bindings_val) = read_json::<BindingsConfig>(&file_path) {
+    if let Some(custom_bindings_val) = read_json::<ApplicationBindings>(&file_path) {
         if let Some(profile_val) = custom_bindings_val.profiles.get(&interaction_profile) {
 
             let mut custom_bindings = Vec::<xr::ActionSuggestedBinding>::new();
@@ -82,7 +82,7 @@ fn update_default_bindings_file(instance: &InstanceWrapper, suggested_bindings: 
 
     let mut default_bindings = match read_json(&file_path) {
         Some(default_bindings) => default_bindings,
-        None => BindingsConfig::default(),
+        None => ApplicationBindings::default(),
     };
 
     let mut profile = InteractionProfileBindings::default();

@@ -2,7 +2,9 @@ mod loader_interfaces;
 mod wrappers;
 mod injections;
 mod util;
+mod gui;
 
+use common::xrapplication_info::XrApplicationInfo;
 use wrappers::*;
 use loader_interfaces::*;
 use util::*;
@@ -10,6 +12,7 @@ use util::*;
 use openxr_sys as xr;
 use openxr_sys::pfn as pfn;
 
+use std::collections::HashMap;
 use std::os::raw::c_char;
 use std::ffi::CStr;
 use std::sync::Arc;
@@ -59,7 +62,7 @@ unsafe extern "system" fn create_api_layer_instance(
     
     let application_info = &(*instance_info).application_info;
 
-    let wrapper = Arc::new(wrappers::InstanceWrapper {
+    let wrapper = Arc::new(InstanceWrapper {
         handle: *instance,
         sessions: RwLock::new(Vec::new()),
         action_sets: RwLock::new(Vec::new()),
@@ -68,6 +71,15 @@ unsafe extern "system" fn create_api_layer_instance(
         application_version: application_info.application_version,
         engine_name: i8_arr_to_owned(&application_info.engine_name),
         engine_version: application_info.engine_version,
+
+        application_info: RwLock::new(
+            XrApplicationInfo {
+                application_name: i8_arr_to_owned(&application_info.application_name),
+                action_sets: HashMap::new()
+            }
+        ),
+        gui: RwLock::new(None),
+        gui_thread: None,
 
         create_session: std::mem::transmute(get_func(*instance, "xrCreateSession").unwrap()),
         create_action_set: std::mem::transmute(get_func(*instance, "xrCreateActionSet").unwrap()),
@@ -86,6 +98,12 @@ unsafe extern "system" fn create_api_layer_instance(
 
     //Add this instance to the wrapper map
     instances().insert((*instance).into_raw(), wrapper);
+
+    let flat = &instances().get(&(*instance).into_raw()).unwrap();
+
+    std::thread::spawn(move || {
+        gui::do_thing(flat.application_info.try_read().unwrap().clone());
+    });
 
     result
 }
