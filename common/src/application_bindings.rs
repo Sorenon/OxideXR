@@ -1,4 +1,4 @@
-use std::{collections::HashMap, vec};
+use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -20,9 +20,19 @@ pub struct ActionSetBindings {
     pub actions: HashMap<String, ActionBindings>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct ActionBindings {
     pub bindings: Vec<String>,
+}
+
+pub struct Binding {
+    pub path: String,
+    pub analog_threshold: Option<AnalogThreshold>,
+}
+
+pub struct AnalogThreshold {
+    pub on_threshold: f32,
+    pub off_threshold: f32,
 }
 
 #[test]

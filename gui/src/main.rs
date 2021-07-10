@@ -1,6 +1,6 @@
-use std::{collections::HashMap, env};
+use std::{collections::HashMap, env, path::Path};
 
-use common::{application_bindings::ApplicationBindings, serial::{self, CONFIG_DIR}, xrapplication_info::{XrApplicationInfo}};
+use common::{application_bindings::*, serial::{self, CONFIG_DIR}, xrapplication_info::XrApplicationInfo};
 use iced::{Application, Button, Column, Command, Element, Row, Scrollable, Settings, Text, TextInput, button, executor, scrollable, text_input};
 
 pub fn main() {
@@ -9,19 +9,24 @@ pub fn main() {
 }
 
 pub struct BindingsGUI {
-    application_info: XrApplicationInfo,
-    default_bindings: ApplicationBindings,
+    application_name: String,
 
     refresh_button_state: button::State,
+    save_button_state: button::State,
     scroll_state: scrollable::State,
 
-    input_states: HashMap<String, HashMap<String, HashMap<String, ActionWidgetState>>>,
+    input_states: HashMap<String, HashMap<String, ActionSetWidgetState>>,
     input_values: Vec<String>,
+}
+
+struct ActionSetWidgetState {
+    localized_name: String,
+    actions: HashMap<String, ActionWidgetState>,
 }
 
 struct ActionWidgetState {
     localized_name: String,
-    sub_actions: Vec<BindingWidgetState>,
+    bindings: Vec<BindingWidgetState>,
 }
 
 struct BindingWidgetState {
@@ -34,6 +39,7 @@ struct BindingWidgetState {
 pub enum Message {
     Refresh,
     UpdateText(String, usize),
+    Save,
     None,
 }
 
@@ -48,23 +54,18 @@ impl Application for BindingsGUI {
         (
             BindingsGUI {
                 refresh_button_state: button::State::new(),
+                save_button_state: button::State::new(),
                 scroll_state: scrollable::State::new(),
                 input_states: HashMap::new(),
                 input_values: Vec::new(),
-                application_info: XrApplicationInfo {
-                    action_sets: HashMap::new(),
-                    application_name: flags
-                },
-                default_bindings: ApplicationBindings {
-                    profiles: HashMap::new()
-                }
+                application_name: flags,
             },
             Command::none()
         )
     }
 
     fn title(&self) -> String {
-        String::from(format!("OxideXR for {}", self.application_info.application_name))
+        String::from(format!("OxideXR for {}", self.application_name))
     }
 
     fn update(
@@ -74,24 +75,24 @@ impl Application for BindingsGUI {
     ) -> iced::Command<Self::Message> {
         match message {
             Message::Refresh => {
-                let uuid = serial::get_uuid(&self.application_info.application_name);
+                let uuid = serial::get_uuid(&self.application_name);
                 let file_path = format!("{}{}/actions.json", CONFIG_DIR, uuid);
-                self.application_info = serial::read_json::<XrApplicationInfo>(&file_path).unwrap();
+                let application_info = serial::read_json::<XrApplicationInfo>(&file_path).unwrap();
                 let file_path = format!("{}{}/default_bindings.json", CONFIG_DIR, uuid);
-                self.default_bindings = serial::read_json::<ApplicationBindings>(&file_path).unwrap();
+                let default_bindings = serial::read_json::<ApplicationBindings>(&file_path).unwrap();
 
                 self.input_states.clear();
-                for (profile_name, profile_binding) in &self.default_bindings.profiles {
+                for (profile_name, profile_binding) in &default_bindings.profiles {
                     let mut action_sets = HashMap::new();
 
-                    for (set_name, set_info) in &self.application_info.action_sets {
+                    for (set_name, set_info) in &application_info.action_sets {
                         let mut actions = HashMap::new();
                         let action_set_bindings = profile_binding.action_sets.get(set_name);
 
                         for (action_name, action_info) in &set_info.actions {
                             let mut aws = ActionWidgetState {
                                 localized_name: action_info.localized_name.clone(),
-                                sub_actions: Vec::new(),
+                                bindings: Vec::new(),
                             };
 
                             if action_info.subaction_paths.is_empty() {
@@ -102,7 +103,7 @@ impl Application for BindingsGUI {
                                     }
                                 }
                                 self.input_values.push(binding.unwrap_or_default());
-                                aws.sub_actions.push(BindingWidgetState {
+                                aws.bindings.push(BindingWidgetState {
                                     input_state: text_input::State::new(),
                                     sub_action_path: None,
                                     path_str_idx: self.input_values.len() - 1,
@@ -112,11 +113,14 @@ impl Application for BindingsGUI {
                                     let mut binding = None; 
                                     if let Some(action_set_bindings) = action_set_bindings {
                                         if let Some(action_bindings) = action_set_bindings.actions.get(action_name) {
-                                            binding = action_bindings.bindings.iter().find(|binding| {binding.starts_with(subaction_path)}).cloned();
+                                            let binding_opt = action_bindings.bindings.iter().find(|binding| {binding.starts_with(subaction_path)});
+                                            if let Some(binding_opt) = binding_opt {
+                                                binding = Some(binding_opt[subaction_path.len()..].to_owned());
+                                            }
                                         }
                                     }
                                     self.input_values.push(binding.unwrap_or_default());
-                                    aws.sub_actions.push(BindingWidgetState {
+                                    aws.bindings.push(BindingWidgetState {
                                         input_state: text_input::State::new(),
                                         sub_action_path: Some(subaction_path.clone()),
                                         path_str_idx: self.input_values.len() - 1,
@@ -126,15 +130,54 @@ impl Application for BindingsGUI {
 
                             actions.insert(action_name.clone(), aws);
                         }
-                        action_sets.insert(set_name.clone(), actions);
+
+                        action_sets.insert(set_name.clone(), ActionSetWidgetState {
+                            localized_name: set_info.localized_name.clone(),
+                            actions,
+                        });
                     }
                     self.input_states.insert(profile_name.clone(), action_sets);
                 }
             },
-            Message::None => (),
             Message::UpdateText(string, idx) => {
                 self.input_values[idx] = string;
             },
+            Message::Save => {
+                let uuid = serial::get_uuid(&self.application_name);
+                let file_path = format!("{}{}/bindings/custom_bindings.json", CONFIG_DIR, uuid);
+                
+                let mut custom_bindings = ApplicationBindings::default();
+                for (profile_name, action_widget_sets) in &self.input_states {
+                    let mut profile_bindings = InteractionProfileBindings::default();
+                    for (set_name, action_widgets) in action_widget_sets {
+                        let mut set_bindings = ActionSetBindings::default();
+                        for (action_name, action_widget) in &action_widgets.actions {
+                            let mut action_bindings = ActionBindings::default();
+                            for binding in &action_widget.bindings {
+                                let binding_path = &self.input_values[binding.path_str_idx];
+                                if !binding_path.is_empty() {
+                                    match &binding.sub_action_path {
+                                        Some(sub_action_path) => action_bindings.bindings.push(format!("{}{}", sub_action_path, binding_path).to_owned()),
+                                        None => action_bindings.bindings.push(binding_path.clone()),
+                                    }
+                                }
+                            }
+                            if !action_bindings.bindings.is_empty() {
+                                set_bindings.actions.insert(action_name.clone(), action_bindings);
+                            }
+                        }
+                        if !set_bindings.actions.is_empty() {
+                            profile_bindings.action_sets.insert(set_name.clone(), set_bindings);
+                        }
+                    }
+                    if !profile_bindings.action_sets.is_empty() {
+                        custom_bindings.profiles.insert(profile_name.clone(), profile_bindings);
+                    }
+                }
+
+                serial::write_json(&custom_bindings, Path::new(&file_path));
+            },
+            Message::None => (),
         }
         
         Command::none()
@@ -142,15 +185,15 @@ impl Application for BindingsGUI {
 
     fn view<'a>(&mut self) -> Element<'_, Self::Message> {
         let mut column = Column::new()
-            .push(Button::new(&mut self.refresh_button_state, Text::new("Reload")).on_press(Message::Refresh));
+            .push(Button::new(&mut self.refresh_button_state, Text::new("Reload")).on_press(Message::Refresh))
+            .push(Button::new(&mut self.save_button_state, Text::new("Save")).on_press(Message::Save));
 
-            //TODO clean this up with rustic iteration
             for (profile_name, action_sets) in &mut self.input_states {
                 column = column.push(Text::new(profile_name).size(35));
-                for (set_name, actions) in action_sets {
-                    column = column.push(Text::new(set_name).size(30));
-                    for (_, aws) in actions {
-                        for bs in &mut aws.sub_actions {
+                for (_, action_set_widget) in action_sets {
+                    column = column.push(Text::new(&action_set_widget.localized_name).size(30));
+                    for (_, aws) in &mut action_set_widget.actions {
+                        for bs in &mut aws.bindings {
                             let idx = bs.path_str_idx;
                             if let Some(subaction_path) = &bs.sub_action_path {
                                 column = column.push(Row::new()
