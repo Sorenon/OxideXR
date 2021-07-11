@@ -41,6 +41,12 @@ impl XrApplicationInfo {
     }
 }
 
+impl From<openxr_sys::ActionType> for ActionType {
+    fn from(action_type: openxr_sys::ActionType) -> Self {
+        Self::from_xr(action_type)
+    }
+}
+
 impl ActionType {
     pub fn from_xr(action_type: openxr_sys::ActionType) -> ActionType {
         match action_type {
@@ -50,6 +56,13 @@ impl ActionType {
             openxr_sys::ActionType::VECTOR2F_INPUT => ActionType::Vector2fInput,
             openxr_sys::ActionType::VIBRATION_OUTPUT => ActionType::VibrationOutput,
             _ => ActionType::Unknown
+        }
+    }
+
+    pub fn is_primitive(&self) -> bool {
+        match self {
+            ActionType::BooleanInput | ActionType::FloatInput => true,
+            _ => false,
         }
     }
 }

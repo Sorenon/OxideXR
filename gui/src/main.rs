@@ -1,3 +1,5 @@
+mod main2;
+
 use std::{collections::HashMap, env, path::Path};
 
 use common::{application_bindings::*, serial::{self, CONFIG_DIR}, xrapplication_info::XrApplicationInfo};
@@ -5,7 +7,7 @@ use iced::{Application, Button, Column, Command, Element, Row, Scrollable, Setti
 
 pub fn main() {
     let args: Vec<String> = env::args().collect();
-    BindingsGUI::run(Settings::with_flags(args.get(1).unwrap().clone())).unwrap();
+    main2::BindingsGUI::run(Settings::with_flags(args.get(1).unwrap().clone())).unwrap();
 }
 
 pub struct BindingsGUI {
