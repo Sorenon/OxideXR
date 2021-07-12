@@ -124,8 +124,9 @@ fn test() {
 }
 
 pub fn generate() -> Root {
-    //TODO remove
+    //TODO replace with better approach
 
+    //JSON license:
     //Copyright 2020-2021, Collabora, Ltd.
     //
     //SPDX-License-Identifier: BSL-1.0

@@ -22,7 +22,7 @@ pub struct ActionInfo {
     pub subaction_paths: Vec<String>,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Deserialize, Serialize)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Deserialize, Serialize, Hash)]
 pub enum ActionType {
     BooleanInput,
     FloatInput,
@@ -64,5 +64,9 @@ impl ActionType {
             ActionType::BooleanInput | ActionType::FloatInput => true,
             _ => false,
         }
+    }
+
+    pub const fn all() -> [ActionType; 6] {
+        [ActionType::BooleanInput, ActionType::FloatInput, ActionType::Vector2fInput, ActionType::PoseInput, ActionType::VibrationOutput, ActionType::Unknown]
     }
 }
