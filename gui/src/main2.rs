@@ -1,7 +1,7 @@
-use std::{collections::HashMap, ops::Add, str::CharIndices};
+use std::{collections::HashMap, ops::Add};
 
-use common::{application_bindings::*, interaction_profiles::Feature, serial::{self, CONFIG_DIR}, xrapplication_info::{ActionInfo, ActionType, XrApplicationInfo}};
-use iced::{Application, Button, Column, Command, Element, PickList, Row, Scrollable, Text, TextInput, button, executor, pick_list, scrollable, text_input};
+use common::{application_bindings::*, interaction_profiles::{Feature}, serial::{self, CONFIG_DIR}, xrapplication_info::{ActionType, XrApplicationInfo}};
+use iced::{Application, Button, Column, Command, Container, Element, Length, PickList, Row, Scrollable, Text, TextInput, button, executor, futures::lock::Mutex, pick_list, scrollable, text_input};
 
 pub struct BindingsGUI {
     application_name: String,
@@ -10,24 +10,35 @@ pub struct BindingsGUI {
     save_button_state: button::State,
     scroll_state: scrollable::State,
 
-    selected_profile: String,
+    selected_profile: Option<String>,
     profiles_pl_state: pick_list::State<String>,
 
-    selected_set: String,
+    selected_action_set: String,
     set_pl_state: pick_list::State<String>,
 
-    input_states: HashMap<String, InteractionProfileWidget>,
+    interaction_profiles: HashMap<String, InteractionProfileGUI>,
     input_values: Vec<String>,
-    action_types: HashMap<String, HashMap<ActionType, Vec<String>>>
+    action_set_info: HashMap<String, ActionSetGUI>
 }
 
 #[derive(Debug)]
-struct InteractionProfileWidget(HashMap<String, ActionSetWidget>, String);
+struct ActionSetGUI {
+    delocalized_name: String,
+    actions_for_types: HashMap<ActionType, Vec<String>>,
+}
+
+#[derive(Debug)]
+struct InteractionProfileGUI {
+    delocalized_name: String,
+    action_sets: HashMap<String, ActionSetWidget>
+}
+
 #[derive(Debug)]
 struct ActionSetWidget(HashMap<String, SubactionWidget>, String);
+
 #[derive(Debug)]
-// struct SubactionWidget(HashMap<String, String>);
 struct SubactionWidget(Vec<BindingWidget>);
+
 #[derive(Debug)]
 struct BindingWidget{
     subpath: String,
@@ -43,6 +54,7 @@ pub enum Message {
     SelectProfile(String),
     SelectActionSet(String),
     Save,
+    #[allow(dead_code)]
     None,
 }
 
@@ -59,12 +71,12 @@ impl Application for BindingsGUI {
                 refresh_button_state: button::State::new(),
                 save_button_state: button::State::new(),
                 scroll_state: scrollable::State::new(),
-                input_states: HashMap::new(),
+                interaction_profiles: HashMap::new(),
                 input_values: Vec::new(),
-                action_types: HashMap::new(),
-                selected_profile: String::new(),
+                action_set_info: HashMap::new(),
+                selected_profile: None,
                 profiles_pl_state: pick_list::State::default(),
-                selected_set: String::new(),
+                selected_action_set: String::new(),
                 set_pl_state: pick_list::State::default(),
                 application_name: flags,
             },
@@ -73,7 +85,7 @@ impl Application for BindingsGUI {
     }
 
     fn title(&self) -> String {
-        String::from(format!("OxideXR for {}", self.application_name))
+        String::from(format!("OxideXR for {}", &self.application_name))
     }
 
     fn update(
@@ -91,15 +103,14 @@ impl Application for BindingsGUI {
 
                 let root = common::interaction_profiles::generate();
 
-                self.action_types.clear();
+                self.action_set_info.clear();
                 for (set_name, set_info) in application_info.action_sets.iter() {
                     let mut action_types_set = HashMap::new();
                     for action_type in &ActionType::all() {
                         let mut vec = set_info.actions.iter()
-                        .filter_map(|(action_name, action_info)|
-                            {
+                        .filter_map(|(_, action_info)| {
                                 if *action_type == action_info.action_type || action_type.is_primitive() && action_info.action_type.is_primitive() {
-                                    Some(action_name.to_owned())
+                                    Some(action_info.localized_name.to_owned())
                                 } else {
                                     None
                                 }
@@ -109,15 +120,17 @@ impl Application for BindingsGUI {
                         vec.push(String::new());
                         action_types_set.insert(action_type.to_owned(), vec);
                     }
-                    self.action_types.insert(set_name.clone(), action_types_set);
+                    self.action_set_info.insert(set_info.localized_name.clone(), ActionSetGUI {
+                        delocalized_name: set_name.clone(),
+                        actions_for_types: action_types_set,
+                    });
                 }
                 
                 let mut interaction_profile_widgets = HashMap::new();
 
                 //TODO clean up this mess
-                for (profile_name, profile) in &root.profiles {
+                for (profile_name, profile_info) in &root.profiles {
                     let profile_bindings = default_bindings.profiles.get(profile_name);
-                    if profile_bindings.is_none() { continue; }
 
                     let mut action_set_widgets = HashMap::new();
                     for (set_name, set_info) in &application_info.action_sets {
@@ -126,10 +139,10 @@ impl Application for BindingsGUI {
                         } else { None };
                         println!("{}", set_name);
                         let mut subaction_widgets = HashMap::new();
-                        for subaction_path in profile.subaction_paths.iter() {
+                        for subaction_path in profile_info.subaction_paths.iter() {
                             println!("{}", subaction_path);
                             let mut binding_widgets = HashMap::new();
-                            for (subpath, subpath_info) in profile.subpaths.iter() {
+                            for (subpath, subpath_info) in profile_info.subpaths.iter() {
                                 if let Some(side) = &subpath_info.side {
                                     if !subaction_path.ends_with(side) {
                                         continue;
@@ -156,17 +169,17 @@ impl Application for BindingsGUI {
                                                         for wanted_feature in wanted_features {
                                                             if subpath_info.features.contains(wanted_feature) {
                                                                 println!("{}/{} -> {}", &binding, wanted_feature.to_str(), &action_name);
-                                                                binding_widgets.insert(String::from(&binding[subaction_path.len()..]).add("/").add(wanted_feature.to_str()), (wanted_feature.clone(), action_name.clone()));
+                                                                binding_widgets.insert(String::from(&binding[subaction_path.len()..]).add("/").add(wanted_feature.to_str()), (wanted_feature.clone(), action_info.localized_name.clone()));
                                                                 continue;
                                                             }
                                                         }
                                                     } else if subpath_info.features.contains(&Feature::from_str(&component[1..])) {
                                                         println!("{} -> {}", &binding, &action_name);
-                                                        binding_widgets.insert(String::from(&binding[subaction_path.len()..]), (Feature::from_str(&component[1..]) , action_name.clone()));
+                                                        binding_widgets.insert(String::from(&binding[subaction_path.len()..]), (Feature::from_str(&component[1..]) , action_info.localized_name.clone()));
                                                     } else if action_info.action_type.is_primitive() && subpath_info.features.contains(&Feature::Position) { //Manually emulate x,y features if we have a position feature 
                                                         if component == "/x" || component == "/y" {
                                                             println!("{} -> {}", &binding, &action_name);
-                                                            binding_widgets.insert(String::from(&binding[subaction_path.len()..]), (Feature::Value, action_name.clone()));
+                                                            binding_widgets.insert(String::from(&binding[subaction_path.len()..]), (Feature::Value, action_info.localized_name.clone()));
                                                         } 
                                                     }
                                                 }
@@ -216,54 +229,54 @@ impl Application for BindingsGUI {
                             sw.0.sort_by_cached_key(|bw| {bw.subpath.clone()});
                             subaction_widgets.insert(subaction_path.clone(), sw);
                         }
-                        action_set_widgets.insert(set_name.to_owned(), ActionSetWidget(subaction_widgets, set_info.localized_name.clone()));
+                        action_set_widgets.insert(set_info.localized_name.clone(), ActionSetWidget(subaction_widgets, set_info.localized_name.clone()));
                     }
-                    interaction_profile_widgets.insert(profile_name.clone(), InteractionProfileWidget(action_set_widgets, profile.title.clone()));
+                    interaction_profile_widgets.insert(profile_info.title.clone(), InteractionProfileGUI {
+                        delocalized_name: profile_name.clone(),
+                        action_sets: action_set_widgets
+                    });
                     
                 }
-                self.input_states = interaction_profile_widgets;
+                self.interaction_profiles = interaction_profile_widgets;
             },
             Message::UpdateText(string, idx) => {
                 self.input_values[idx] = string;
             },
             Message::Save => {},
             Message::None => (),
-            Message::SelectProfile(profile) => self.selected_profile = profile,
-            Message::SelectActionSet(profile) => self.selected_set = profile,
+            Message::SelectProfile(profile) => {
+                self.selected_profile = Some(profile)
+            },
+            Message::SelectActionSet(profile) => self.selected_action_set = profile,
         }
         
         Command::none()
     }
 
-    fn view<'a>(&mut self) -> Element<'_, Self::Message> {
+    fn view<'a>(&'a mut self) -> Element<'_, Self::Message> {
         println!("reload view");
-        let mut column = Column::new()
+        let mut column = Column::new().spacing(10)
             .push(Button::new(&mut self.refresh_button_state, Text::new("Reload")).on_press(Message::Refresh))
-            .push(Button::new(&mut self.save_button_state, Text::new("Save")).on_press(Message::Save));
-
-            column = column.push(
-                PickList::new(&mut self.profiles_pl_state, self.input_states.keys().map(|s| {s.to_owned()}).collect::<Vec<String>>(), Some(self.selected_profile.clone()), |profile| { Message::SelectProfile(profile) })
+            .push(Button::new(&mut self.save_button_state, Text::new("Save")).on_press(Message::Save))
+            .push(
+                PickList::new(&mut self.profiles_pl_state, self.interaction_profiles.keys().map(|s| {s.to_owned()}).collect::<Vec<String>>(), self.selected_profile.clone(), |profile| { Message::SelectProfile(profile) })
+            )
+            .push(
+                PickList::new(&mut self.set_pl_state, self.action_set_info.keys().map(|s| {s.to_owned()}).collect::<Vec<String>>(), Some(self.selected_action_set.clone()), |set| { Message::SelectActionSet(set) })
             );
-            column = column.push(
-                PickList::new(&mut self.set_pl_state, self.action_types.keys().map(|s| {s.to_owned()}).collect::<Vec<String>>(), Some(self.selected_set.clone()), |set| { Message::SelectActionSet(set) })
-            );
 
-            for (profile_name, profile_widget) in self.input_states.iter_mut() {
-                if *profile_name != self.selected_profile { continue; }
-
-                // column = column.push(Text::new(&profile_widget.1).size(35));
-                for (set_name, set_widget) in profile_widget.0.iter_mut() {
-                    if *set_name != self.selected_set { continue; }
-
-                    let actions_for_action_type = &self.action_types[set_name];
-                    // column = column.push(Text::new(&set_widget.1).size(32));
+            if let Some(pp) = &self.selected_profile {
+                let profile_widget = self.interaction_profiles.get_mut(pp).unwrap();
+                let selected_set = &self.selected_action_set;
+                if let Some(set_widget) = profile_widget.action_sets.get_mut(selected_set) {
+                    let set_wg_info = &self.action_set_info[selected_set].actions_for_types;
                     for (subaction_path, subaction_widget) in set_widget.0.iter_mut() {
-                        column = column.push(Text::new(i18n(subaction_path)).size(30));
+                        column = column.push(Text::new(localize(subaction_path)).size(30));
                         for binding_widget in subaction_widget.0.iter_mut() {
                             let idx = binding_widget.input_value_idx;
-                            let pick_list = PickList::new(&mut binding_widget.pick_list, &actions_for_action_type[&binding_widget.action_type], Some(self.input_values[idx].clone()), move |f| { Message::UpdateText(f, idx) });
+                            let pick_list = PickList::new(&mut binding_widget.pick_list, &set_wg_info[&binding_widget.action_type], Some(self.input_values[idx].clone()), move |f| { Message::UpdateText(f, idx) });
                             column = column.push(Row::new()
-                                .push(Text::new(i18n(&binding_widget.subpath)).size(30))
+                                .push(Text::new(localize(&binding_widget.subpath)).size(30))
                                 .push(Text::new(" => ").size(30))
                                 .push(pick_list)
                             );
@@ -272,11 +285,11 @@ impl Application for BindingsGUI {
                 }
             }
 
-        Scrollable::new(&mut self.scroll_state).push(column).into()
+            Scrollable::new(&mut self.scroll_state).padding(20).push(Container::new(column).width(Length::Fill)).into()
     }
 }
 
-fn i18n<'a>(path: &'a str) -> &'a str {
+fn localize<'a>(path: &'a str) -> &'a str {
     match path {
         "/user/hand/right" => "Right Hand",
         "/user/hand/left" => "Left Hand",

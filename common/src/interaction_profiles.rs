@@ -1,10 +1,10 @@
-use std::{collections::HashMap, str::FromStr};
+use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize, de::Visitor, ser};
+use serde::{Deserialize, Serialize};
 
 use crate::xrapplication_info::ActionType;
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct Root {
     pub profiles: HashMap<String, InteractionProfile>,
 }
@@ -26,13 +26,23 @@ pub struct Subpath {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Feature {
+    ///click - A physical switch has been pressed by the user. This is valid for all buttons, and is common for trackpads, thumbsticks, triggers, and dpads. "click" components are always boolean.
     Click,
+    ///touch - The user has touched the input source. This is valid for all trackpads, and may be present for any other kind of input source if the device includes the necessary sensor. "touch" components are always boolean.
     Touch,
+    ///force - A 1D scalar value that represents the user applying force to the input. It varies from 0 to 1, with 0 being the rest state. This is present for any input source with a force sensor.
     Force,
+    ///value - A 1D scalar value that varies from 0 to 1, with 0 being the rest state. This is present for triggers, throttles, and pedals. It may also be present for squeeze or other components.
     Value,
+    ///x, y - scalar components of 2D values. These vary in value from -1 to 1. These represent the 2D position of the input source with 0 being the rest state on each axis. -1 means all the way left for x axis or all the way down for y axis. +1 means all the way right for x axis or all the way up for y axis. x and y components are present for trackpads, thumbsticks, and joysticks.
     Position,
+    ///twist - Some sources, such as flight sticks, have a sensor that allows the user to twist the input left or right. For this component -1 means all the way left and 1 means all the way right.
     Twist,
+    ///pose - The orientation and/or position of this input source. This component may exist for dedicated pose identifiers like grip and aim, or may be defined on other identifiers such as trackpad to let applications reason about the surface of that part.
     Pose,
+    ///haptic - A haptic element like an LRA (Linear Resonant Actuator) or vibration motor
+    Haptic,
+    ///TODO https://www.khronos.org/registry/OpenXR/specs/1.0/html/xrspec.html#_adding_input_sources_via_extensions
     Unknown(String),
 }
 
@@ -44,27 +54,25 @@ impl Serialize for Feature {
     }
 }
 
-struct FeatureVisitor;
-
-impl<'de> Visitor<'de> for FeatureVisitor {
-    type Value = Feature;
-
-    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-        Ok(())
-    }
-
-    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-    where
-            E: serde::de::Error, {
-        Ok(Feature::from_str(v))
-    }
-}
-
 impl<'de> Deserialize<'de> for Feature {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de> {
-        deserializer.deserialize_string(FeatureVisitor)
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = Feature;
+        
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("Expected string")
+            }
+        
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                    E: serde::de::Error, {
+                Ok(Feature::from_str(v))
+            }
+        }
+        deserializer.deserialize_string(Visitor)
     }
 }
 
@@ -78,6 +86,7 @@ impl Feature {
             "position" => Feature::Position,
             "twist" => Feature::Twist,
             "pose" => Feature::Pose,
+            "haptic" => Feature::Haptic,
             _ => Feature::Unknown(String::from(string))
         }
     }
@@ -91,6 +100,7 @@ impl Feature {
             Feature::Position => "position",
             Feature::Twist => "twist",
             Feature::Pose => "pose",
+            Feature::Haptic => "haptic",
             Feature::Unknown(str) => str,
         }
     }
@@ -101,20 +111,11 @@ impl Feature {
             Feature::Force | Feature::Value | Feature::Twist => ActionType::FloatInput,
             Feature::Position => ActionType::Vector2fInput,
             Feature::Pose => ActionType::PoseInput,
+            Feature::Haptic => ActionType::VibrationOutput,
             Feature::Unknown(_) => ActionType::Unknown,
         }
     }
 }
-
-/*
-For actions created with XR_ACTION_TYPE_BOOLEAN_INPUT when the runtime is obeying suggested bindings: Boolean input sources must be bound directly to the action. If the path is to a scalar value, a threshold must be applied to the value and values over that threshold will be XR_TRUE. The runtime should use hysteresis when applying this threshold. The threshold and hysteresis range may vary from device to device or component to component and are left as an implementation detail. If the path refers to the parent of input values instead of to an input value itself, the runtime must use …/example/path/value instead of …/example/path if it is available and apply the same thresholding that would be applied to any scalar input. If a parent path does not have a …/value subpath, the runtime must use …/click. In any other situation the runtime may provide an alternate binding for the action or it will be unbound.
-
-For actions created with XR_ACTION_TYPE_FLOAT_INPUT when the runtime is obeying suggested bindings: If the input value specified by the path is scalar, the input value must be bound directly to the float. If the path refers to the parent of input values instead of to an input value itself, the runtime must use /example/path/value instead of …/example/path as the source of the value. If the input value is boolean, the runtime must supply 0.0 or 1.0 as a conversion of the boolean value. In any other situation, the runtime may provide an alternate binding for the action or it will be unbound.
-
-For actions created with XR_ACTION_TYPE_VECTOR2F_INPUT when the runtime is obeying suggested bindings: The suggested binding path must refer to the parent of input values instead of to the input values themselves, and that parent path must contain subpaths …/x and …/y. …/x and …/y must be bound to 'x' and 'y' of the vector, respectively. In any other situation, the runtime may provide an alternate binding for the action or it will be unbound.
-
-For actions created with XR_ACTION_TYPE_POSE_INPUT when the runtime is obeying suggested bindings: Pose input sources must be bound directly to the action. If the path refers to the parent of input values instead of to an input value itself, the runtime must use …/example/path/pose instead of …/example/path if it is available. In any other situation the runtime may provide an alternate binding for the action or it will be unbound.
-*/
 
 #[test]
 fn test() {
