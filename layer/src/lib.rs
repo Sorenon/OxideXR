@@ -2,13 +2,14 @@ mod loader_interfaces;
 mod wrappers;
 mod injections;
 mod util;
+mod god_actions;
 
 use wrappers::*;
 use loader_interfaces::*;
 use util::*;
 
-use openxr_sys as xr;
-use openxr_sys::pfn as pfn;
+use openxr::sys as xr;
+use openxr::sys::pfn as pfn;
 
 use std::os::raw::c_char;
 use std::ffi::CStr;
@@ -44,60 +45,95 @@ unsafe extern "system" fn create_api_layer_instance(
 
     assert_eq!(LAYER_NAME, CStr::from_ptr(std::mem::transmute(next_info.layer_name.as_ptr())).to_str().unwrap());
 
-    //Store the GetInstanceProcAddr func of the layer bellow us
-    GET_INSTANCE_PROC_ADDR_NEXT = Some(next_info.next_get_instance_proc_addr.clone()); 
+    //Get the GetInstanceProcAddr func of the layer bellow us
+    let get_instance_proc_addr_next: pfn::GetInstanceProcAddr = next_info.next_get_instance_proc_addr; 
 
     //Initialize the layer bellow us
     let result = {
         let mut my_create_info = (*layer_info).clone();
         my_create_info.next_info = next_info.next;
 
-        (next_info.next_create_api_layer_instance)(instance_info, std::ptr::addr_of!(my_create_info), instance)
+        (next_info.next_create_api_layer_instance)(instance_info, &my_create_info, instance)
     };
 
     if result.into_raw() < 0 { return result; }
     
     let application_info = &(*instance_info).application_info;
 
-    let wrapper = Arc::new(wrappers::InstanceWrapper {
+    let entry = match openxr::Entry::from_proc_addr(get_instance_proc_addr_next) {
+        Ok(caller) => caller,
+        Err(result) => return result,
+    };
+
+    let caller = match openxr::raw::Instance::load(&entry, *instance) {
+        Ok(caller) => caller,
+        Err(result) => return result,
+    };
+
+    // let enabled_ext = std::slice::from_raw_parts(
+    //     (*instance_info).enabled_extension_names,
+    //     (*instance_info).enabled_extension_count as usize,
+    // )
+    // .into_iter()
+    // .map(|ptr| {
+    //     let mut extension_name = [0; xr::MAX_EXTENSION_NAME_SIZE];
+    //     place_cstr(&mut extension_name, &CStr::from_ptr(*ptr).to_string_lossy());
+    //     xr::ExtensionProperties {
+    //         ty: xr::ExtensionProperties::TYPE,
+    //         next: std::ptr::null_mut(),
+    //         extension_name,
+    //         extension_version: 0,
+    //     }
+    // })
+    // .collect::<Vec<_>>();
+
+    // let exts = match openxr::InstanceExtensions::load(&entry, *instance, &openxr::ExtensionSet::) {
+    //     Ok(caller) => caller,
+    //     Err(result) => return result,
+    // };
+
+    let mut wrapper = wrappers::InstanceWrapper {
         handle: *instance,
         sessions: RwLock::new(Vec::new()),
         action_sets: RwLock::new(Vec::new()),
+
+        god_action_sets: Default::default(),
 
         application_name: i8_arr_to_owned(&application_info.application_name),
         application_version: application_info.application_version,
         engine_name: i8_arr_to_owned(&application_info.engine_name),
         engine_version: application_info.engine_version,
 
-        create_session: std::mem::transmute(get_func(*instance, "xrCreateSession").unwrap()),
-        create_action_set: std::mem::transmute(get_func(*instance, "xrCreateActionSet").unwrap()),
-        create_action: std::mem::transmute(get_func(*instance, "xrCreateAction").unwrap()),
+        core: caller,
 
-        destroy_instance: std::mem::transmute(get_func(*instance, "xrDestroyInstance").unwrap()),
-        destroy_session: std::mem::transmute(get_func(*instance, "xrDestroySession").unwrap()),
-        destroy_action_set: std::mem::transmute(get_func(*instance, "xrDestroyActionSet").unwrap()),
-        destroy_action: std::mem::transmute(get_func(*instance, "xrDestroyAction").unwrap()),
+        get_instance_proc_addr_next,
+    };
 
-        attach_session_action_sets: std::mem::transmute(get_func(*instance, "xrAttachSessionActionSets").unwrap()),
-        suggest_interaction_profile_bindings: std::mem::transmute(get_func(*instance, "xrSuggestInteractionProfileBindings").unwrap()),
-        path_to_string: std::mem::transmute(get_func(*instance, "xrPathToString").unwrap()),
-        string_to_path: std::mem::transmute(get_func(*instance, "xrStringToPath").unwrap()),
-    });
+    // let name = wrapper.application_name.clone();
+    // std::thread::spawn(move || {
+    //     std::process::Command::new("C:\\Users\\soren\\Documents\\Programming\\rust\\oxidexr\\target\\debug\\gui.exe").arg(name).output().unwrap();
+    // });
 
-    let name = wrapper.application_name.clone();
-    std::thread::spawn(move || {
-        std::process::Command::new("C:\\Users\\soren\\Documents\\Programming\\rust\\oxidexr\\target\\debug\\gui.exe").arg(name).output().unwrap();
-
-    });
+    match god_actions::create_god_action_sets(&wrapper) {
+        Ok(god_action_sets) => {
+            wrapper.god_action_sets = god_action_sets;
+        },
+        Err(result) => {
+            wrapper.destroy_instance();
+            *instance = xr::Instance::NULL;
+            return result;      
+        },
+    }
 
     //Add this instance to the wrapper map
-    instances().insert((*instance).into_raw(), wrapper);
+    instances().insert((*instance).into_raw(), Arc::new(wrapper));
 
     result
 }
 
 unsafe extern "system" fn instance_proc_addr(instance: xr::Instance, name: *const c_char, function: *mut Option<pfn::VoidFunction>) -> xr::Result {
-    let result = GET_INSTANCE_PROC_ADDR_NEXT.unwrap()(instance, name, function);
+    let instance = InstanceWrapper::from_handle(instance);
+    let result = (instance.get_instance_proc_addr_next)(instance.handle, name, function);
 
     if result.into_raw() < 0 { return result; }
 
@@ -106,17 +142,28 @@ unsafe extern "system" fn instance_proc_addr(instance: xr::Instance, name: *cons
 
     (*function) = Some(
         match name {
+            //Constructors
             "xrCreateSession" => std::mem::transmute(injections::create_session as pfn::CreateSession),
             "xrCreateActionSet" => std::mem::transmute(injections::create_action_set as pfn::CreateActionSet),
             "xrCreateAction" => std::mem::transmute(injections::create_action as pfn::CreateAction),
 
+            //Destructors
             "xrDestroyInstance" => std::mem::transmute(injections::destroy_instance as pfn::DestroyInstance),
             "xrDestroySession" => std::mem::transmute(injections::destroy_session as pfn::DestroySession),
             "xrDestroyActionSet" => std::mem::transmute(injections::destroy_action_set as pfn::DestroyActionSet),
             "xrDestroyAction" => std::mem::transmute(injections::destroy_action as pfn::DestroyAction),
             
-            "xrSuggestInteractionProfileBindings" => std::mem::transmute(injections::bindings::suggest_interaction_profile_bindings as pfn::SuggestInteractionProfileBindings),
-            "xrAttachSessionActionSets" => std::mem::transmute(injections::actions::attach_session_action_sets as pfn::AttachSessionActionSets),
+            //Instance methods
+            "xrSuggestInteractionProfileBindings" => std::mem::transmute(injections::instance::suggest_interaction_profile_bindings as pfn::SuggestInteractionProfileBindings),
+        
+            //Session methods
+            "xrAttachSessionActionSets" => std::mem::transmute(injections::session::attach_session_action_sets as pfn::AttachSessionActionSets),
+            "xrSyncActions" => std::mem::transmute(injections::session::sync_actions as pfn::SyncActions),
+            "xrGetActionStateBoolean" => std::mem::transmute(injections::session::get_action_state_boolean as pfn::GetActionStateBoolean),
+            "xrGetActionStateFloat" => std::mem::transmute(injections::session::get_action_state_float as pfn::GetActionStateFloat),
+            "xrGetActionStateVector2f" => std::mem::transmute(injections::session::get_action_state_vector2f as pfn::GetActionStateVector2f),
+            "xrGetActionStatePose" => std::mem::transmute(injections::session::get_action_state_pose as pfn::GetActionStatePose),
+
             _ => (*function).unwrap()
         }
     );

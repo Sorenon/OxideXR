@@ -9,6 +9,6 @@ crate-type = ["cdylib"]
 bench = false
 
 [dependencies]
-openxr-sys = "0.9"
+openxr = {  git = "https://github.com/Sorenon/openxrs", default-features = false, features = ["layer"] }
 dashmap = "4.0"
 common = { path = "../common" }

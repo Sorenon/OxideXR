@@ -1,13 +1,15 @@
-pub mod actions;
-pub mod bindings;
+pub mod session;
+pub mod instance;
 
+use std::ptr;
 use std::sync::Arc;
 use std::sync::RwLock;
 
 use crate::i8_arr_to_owned;
 use crate::wrappers::*;
 
-use openxr_sys as xr;
+use openxr::sys as xr;
+use openxr::sys::ActionSuggestedBinding;
 
 pub unsafe extern "system" fn create_session(
     instance: xr::Instance,
@@ -24,6 +26,43 @@ pub unsafe extern "system" fn create_session(
         handle: *session,
         instance: Arc::downgrade(&instance)
     });
+
+    {
+        let god_action_sets = instance.god_action_sets.values().map(|container| {container.handle} ).collect::<Vec<_>>();
+
+        let my_attach_info = xr::SessionActionSetsAttachInfo {
+            ty: xr::SessionActionSetsAttachInfo::TYPE,
+            next: ptr::null(),
+            count_action_sets: god_action_sets.len() as u32,
+            action_sets: god_action_sets.as_ptr(),
+        };
+
+        let result = wrapper.attach_session_action_sets(&my_attach_info);
+
+        for (profile_path, profile) in &instance.god_action_sets {
+            let bindings = profile.states.iter().map(|(path, god_state)| {
+                ActionSuggestedBinding {
+                    action: god_state.action_handle,
+                    binding: *path,
+                }
+            }).collect::<Vec<_>>();
+
+            let info = xr::InteractionProfileSuggestedBinding {
+                ty: xr::InteractionProfileSuggestedBinding::TYPE,
+                next: ptr::null(),
+                interaction_profile: *profile_path,
+                count_suggested_bindings: bindings.len() as u32,
+                suggested_bindings: bindings.as_ptr(),
+            };
+            
+            (instance.core.suggest_interaction_profile_bindings) (
+                instance.handle,
+                &info
+            );
+        }
+
+        if result.into_raw() < 0 { return result; }
+    }
 
     //Add this session to the wrapper tree
     instance.sessions.write().unwrap().push(wrapper.clone());
@@ -84,7 +123,8 @@ pub unsafe extern "system" fn create_action(
         name: i8_arr_to_owned(&create_info.action_name),
         action_type: create_info.action_type,
         subaction_paths: std::slice::from_raw_parts(create_info.subaction_paths, create_info.count_subaction_paths as usize).to_owned(),
-        localized_name: i8_arr_to_owned(&create_info.localized_action_name)
+        localized_name: i8_arr_to_owned(&create_info.localized_action_name),
+        bindings: Default::default(),
     });
     
     //Add this action to the wrapper tree

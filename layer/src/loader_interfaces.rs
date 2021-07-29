@@ -1,4 +1,4 @@
-use openxr_sys::*;
+use openxr::sys::*;
 
 pub type FnCreateApiLayerInstance = unsafe extern "system" fn(info: *const InstanceCreateInfo, api_layer_info: *const ApiLayerCreateInfo, instance: *mut Instance) -> Result;
 

@@ -8,6 +8,15 @@ pub struct XrApplicationInfo {
     pub action_sets: HashMap<String, ActionSetInfo>,
 }
 
+impl XrApplicationInfo {
+    pub fn from_name(name: &String) -> XrApplicationInfo {
+        XrApplicationInfo {
+            application_name: name.clone(),
+            action_sets: HashMap::new(),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ActionSetInfo {
     pub localized_name: String,
@@ -36,30 +45,26 @@ pub enum ActionType {
     Unknown
 }
 
-impl XrApplicationInfo {
-    pub fn from_name(name: &String) -> XrApplicationInfo {
-        XrApplicationInfo {
-            application_name: name.clone(),
-            action_sets: HashMap::new(),
+impl ActionType {
+    pub fn from_raw(action_type: openxr::sys::ActionType) -> ActionType {
+        match action_type {
+            openxr::sys::ActionType::BOOLEAN_INPUT => ActionType::BooleanInput,
+            openxr::sys::ActionType::FLOAT_INPUT => ActionType::FloatInput,
+            openxr::sys::ActionType::POSE_INPUT => ActionType::PoseInput,
+            openxr::sys::ActionType::VECTOR2F_INPUT => ActionType::Vector2fInput,
+            openxr::sys::ActionType::VIBRATION_OUTPUT => ActionType::VibrationOutput,
+            _ => ActionType::Unknown
         }
     }
-}
 
-impl From<openxr_sys::ActionType> for ActionType {
-    fn from(action_type: openxr_sys::ActionType) -> Self {
-        Self::from_xr(action_type)
-    }
-}
-
-impl ActionType {
-    pub fn from_xr(action_type: openxr_sys::ActionType) -> ActionType {
-        match action_type {
-            openxr_sys::ActionType::BOOLEAN_INPUT => ActionType::BooleanInput,
-            openxr_sys::ActionType::FLOAT_INPUT => ActionType::FloatInput,
-            openxr_sys::ActionType::POSE_INPUT => ActionType::PoseInput,
-            openxr_sys::ActionType::VECTOR2F_INPUT => ActionType::Vector2fInput,
-            openxr_sys::ActionType::VIBRATION_OUTPUT => ActionType::VibrationOutput,
-            _ => ActionType::Unknown
+    pub fn as_raw(&self) -> openxr::sys::ActionType {
+        match self {
+            ActionType::BooleanInput => openxr::sys::ActionType::BOOLEAN_INPUT,
+            ActionType::FloatInput => openxr::sys::ActionType::FLOAT_INPUT,
+            ActionType::PoseInput => openxr::sys::ActionType::POSE_INPUT,
+            ActionType::Vector2fInput => openxr::sys::ActionType::VECTOR2F_INPUT,
+            ActionType::VibrationOutput => openxr::sys::ActionType::VIBRATION_OUTPUT,
+            _ => openxr::sys::ActionType::from_raw(0)
         }
     }
 
@@ -70,7 +75,20 @@ impl ActionType {
         }
     }
 
+    pub fn is_input(&self) -> bool {
+        match self {
+            ActionType::VibrationOutput | ActionType::Unknown => false,
+            _ => true,
+        }
+    }
+
     pub const fn all() -> [ActionType; 6] {
         [ActionType::BooleanInput, ActionType::FloatInput, ActionType::Vector2fInput, ActionType::PoseInput, ActionType::VibrationOutput, ActionType::Unknown]
+    }
+}
+
+impl From<openxr::sys::ActionType> for ActionType {
+    fn from(action_type: openxr::sys::ActionType) -> Self {
+        Self::from_raw(action_type)
     }
 }
