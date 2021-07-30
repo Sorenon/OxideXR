@@ -5,7 +5,6 @@ use common::application_bindings::*;
 use common::serial::read_json;
 use common::serial::get_uuid;
 use common::serial::write_json;
-use common::xrapplication_info::ActionType;
 use crate::wrappers::*;
 
 use openxr::sys as xr;
@@ -14,7 +13,7 @@ pub unsafe extern "system" fn suggest_interaction_profile_bindings(
     instance: xr::Instance, 
     suggested_bindings: *const xr::InteractionProfileSuggestedBinding
 ) -> xr::Result {
-    let instance = InstanceWrapper::from_handle(instance);
+    let instance = InstanceWrapper::from_handle_panic(instance);
 
     let action_suggested_bindings = std::slice::from_raw_parts((*suggested_bindings).suggested_bindings, (*suggested_bindings).count_suggested_bindings as usize);
 
@@ -22,17 +21,13 @@ pub unsafe extern "system" fn suggest_interaction_profile_bindings(
     let god_set = instance.god_action_sets.get(&(*suggested_bindings).interaction_profile).unwrap();
     println!("Bindings: {}", god_set.name);
     for action_suggested_binding in action_suggested_bindings {
-        let action = ActionWrapper::from_handle(action_suggested_binding.action);
+        let action = ActionWrapper::from_handle_panic(action_suggested_binding.action);
         let mut action_bindings = action.bindings.write().unwrap();
 
         if let Some(bindings) = action_bindings.get_mut(profile_path) {
             bindings.push(action_suggested_binding.binding);
         } else {
             action_bindings.insert(*profile_path, vec![action_suggested_binding.binding]);
-        }
-
-        if ActionType::from_raw(action.action_type).is_input() {
-            println!("{}", &god_set.states.get(&action_suggested_binding.binding).unwrap().name);
         }
     }
 
@@ -60,7 +55,7 @@ fn update_default_bindings_file(instance: &InstanceWrapper, suggested_bindings: 
     for suggested_binding in suggested_bindings {
         let binding_string = instance.path_to_string(suggested_binding.binding).unwrap();
 
-        let action = ActionWrapper::from_handle(suggested_binding.action);
+        let action = ActionWrapper::from_handle_panic(suggested_binding.action);
         let action_set_name = &action.action_set().name;
         
         let action_set = match profile.action_sets.get_mut(action_set_name) {

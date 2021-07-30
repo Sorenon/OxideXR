@@ -1,7 +1,6 @@
-pub mod session;
 pub mod instance;
+pub mod session;
 
-use std::ptr;
 use std::sync::Arc;
 use std::sync::RwLock;
 
@@ -9,80 +8,49 @@ use crate::i8_arr_to_owned;
 use crate::wrappers::*;
 
 use openxr::sys as xr;
-use openxr::sys::ActionSuggestedBinding;
 
 pub unsafe extern "system" fn create_session(
     instance: xr::Instance,
     create_info: *const xr::SessionCreateInfo,
     session: *mut xr::Session,
 ) -> xr::Result {
-    let instance = InstanceWrapper::from_handle(instance);
-    
+    let instance = InstanceWrapper::from_handle_panic(instance);
+
     let result = instance.create_session(create_info, session);
 
-    if result.into_raw() < 0 { return result; }
-
-    let wrapper = Arc::new(SessionWrapper {
-        handle: *session,
-        instance: Arc::downgrade(&instance)
-    });
-
-    {
-        let god_action_sets = instance.god_action_sets.values().map(|container| {container.handle} ).collect::<Vec<_>>();
-
-        let my_attach_info = xr::SessionActionSetsAttachInfo {
-            ty: xr::SessionActionSetsAttachInfo::TYPE,
-            next: ptr::null(),
-            count_action_sets: god_action_sets.len() as u32,
-            action_sets: god_action_sets.as_ptr(),
-        };
-
-        let result = wrapper.attach_session_action_sets(&my_attach_info);
-
-        for (profile_path, profile) in &instance.god_action_sets {
-            let bindings = profile.states.iter().map(|(path, god_state)| {
-                ActionSuggestedBinding {
-                    action: god_state.action_handle,
-                    binding: *path,
-                }
-            }).collect::<Vec<_>>();
-
-            let info = xr::InteractionProfileSuggestedBinding {
-                ty: xr::InteractionProfileSuggestedBinding::TYPE,
-                next: ptr::null(),
-                interaction_profile: *profile_path,
-                count_suggested_bindings: bindings.len() as u32,
-                suggested_bindings: bindings.as_ptr(),
-            };
-            
-            (instance.core.suggest_interaction_profile_bindings) (
-                instance.handle,
-                &info
-            );
-        }
-
-        if result.into_raw() < 0 { return result; }
+    if result.into_raw() < 0 {
+        return result;
     }
+
+    let wrapper = match SessionWrapper::new(*session, &instance) {
+        Ok(wrapper) => Arc::new(wrapper),
+        Err(result) => {
+            instance.destroy_session(*session);
+            return result;
+        },
+    };
 
     //Add this session to the wrapper tree
     instance.sessions.write().unwrap().push(wrapper.clone());
 
     //Add this session to the wrapper map
-    sessions().insert((*session).into_raw(), wrapper);
+    sessions().insert(*session, wrapper);
 
     result
 }
 
 pub unsafe extern "system" fn create_action_set(
-    instance: xr::Instance, 
-    create_info: *const xr::ActionSetCreateInfo, 
-    action_set: *mut xr::ActionSet
+    instance: xr::Instance,
+    create_info: *const xr::ActionSetCreateInfo,
+    action_set: *mut xr::ActionSet,
 ) -> xr::Result {
-    let instance = InstanceWrapper::from_handle(instance);
-    
+    let instance = InstanceWrapper::from_handle_panic(instance);
+
     let result = instance.create_action_set(create_info, action_set);
 
-    if result.into_raw() < 0 { return result; }
+    if result.into_raw() < 0 {
+        return result;
+    }
 
     let create_info = *create_info;
 
@@ -92,28 +60,30 @@ pub unsafe extern "system" fn create_action_set(
         actions: RwLock::new(Vec::new()),
         name: i8_arr_to_owned(&create_info.action_set_name),
         localized_name: i8_arr_to_owned(&create_info.localized_action_set_name),
-        priority: create_info.priority
+        priority: create_info.priority,
     });
 
     //Add this action_set to the wrapper tree
     instance.action_sets.write().unwrap().push(wrapper.clone());
 
     //Add this action_set to the wrapper map
-    action_sets().insert((*action_set).into_raw(), wrapper);
+    action_sets().insert(*action_set, wrapper);
 
     result
 }
 
 pub unsafe extern "system" fn create_action(
-    action_set: xr::ActionSet, 
-    create_info: *const xr::ActionCreateInfo, 
-    action: *mut xr::Action
+    action_set: xr::ActionSet,
+    create_info: *const xr::ActionCreateInfo,
+    action: *mut xr::Action,
 ) -> xr::Result {
-    let action_set = ActionSetWrapper::from_handle(action_set);
+    let action_set = ActionSetWrapper::from_handle_panic(action_set);
 
     let result = action_set.create_action(create_info, action);
-    
-    if result.into_raw() < 0 { return result; }
+
+    if result.into_raw() < 0 {
+        return result;
+    }
 
     let create_info = *create_info;
 
@@ -122,17 +92,21 @@ pub unsafe extern "system" fn create_action(
         action_set: Arc::downgrade(&action_set),
         name: i8_arr_to_owned(&create_info.action_name),
         action_type: create_info.action_type,
-        subaction_paths: std::slice::from_raw_parts(create_info.subaction_paths, create_info.count_subaction_paths as usize).to_owned(),
+        subaction_paths: std::slice::from_raw_parts(
+            create_info.subaction_paths,
+            create_info.count_subaction_paths as usize,
+        )
+        .to_owned(),
         localized_name: i8_arr_to_owned(&create_info.localized_action_name),
         bindings: Default::default(),
     });
-    
+
     //Add this action to the wrapper tree
     action_set.actions.write().unwrap().push(wrapper.clone());
 
     //Add this action to the wrapper map
-    actions().insert((*action).into_raw(), wrapper);
-    
+    actions().insert(*action, wrapper);
+
     result
 }
 
@@ -140,26 +114,26 @@ pub unsafe extern "system" fn create_action(
 START DESTRUCTORS
 */
 
-pub unsafe extern "system" fn destroy_instance(
-    instance: xr::Instance
-) -> xr::Result {
-    let result = InstanceWrapper::from_handle(instance).destroy_instance();
+pub unsafe extern "system" fn destroy_instance(instance: xr::Instance) -> xr::Result {
+    let result = InstanceWrapper::from_handle_panic(instance).destroy_instance();
 
-    if result.into_raw() < 0 { return result; }
+    if result.into_raw() < 0 {
+        return result;
+    }
 
     destroy_instance_internal(instance);
 
     result
 }
 
-pub unsafe extern "system" fn destroy_session(
-    session: xr::Session
-) -> xr::Result {
-    let instance = SessionWrapper::from_handle(session).instance();
-    
+pub unsafe extern "system" fn destroy_session(session: xr::Session) -> xr::Result {
+    let instance = SessionWrapper::from_handle_panic(session).instance();
+
     let result = instance.destroy_session(session);
 
-    if result.into_raw() < 0 { return result; }
+    if result.into_raw() < 0 {
+        return result;
+    }
 
     let session = destroy_session_internal(session);
 
@@ -170,32 +144,35 @@ pub unsafe extern "system" fn destroy_session(
     result
 }
 
-pub unsafe extern "system" fn destroy_action_set(
-    action_set: xr::ActionSet
-) -> xr::Result {
-    let instance = ActionSetWrapper::from_handle(action_set).instance();
-    
+pub unsafe extern "system" fn destroy_action_set(action_set: xr::ActionSet) -> xr::Result {
+    let instance = ActionSetWrapper::from_handle_panic(action_set).instance();
+
     let result = instance.destroy_action_set(action_set);
 
-    if result.into_raw() < 0 { return result; }
+    if result.into_raw() < 0 {
+        return result;
+    }
 
     let action_set = destroy_action_set_internal(action_set);
 
     let mut vec = instance.action_sets.write().unwrap();
-    let index = vec.iter().position(|s| Arc::ptr_eq(s, &action_set)).unwrap();
+    let index = vec
+        .iter()
+        .position(|s| Arc::ptr_eq(s, &action_set))
+        .unwrap();
     vec.swap_remove(index);
 
     result
 }
 
-pub unsafe extern "system" fn destroy_action(
-    action: xr::Action
-) -> xr::Result {
-    let action_set = ActionWrapper::from_handle(action).action_set();
-    
+pub unsafe extern "system" fn destroy_action(action: xr::Action) -> xr::Result {
+    let action_set = ActionWrapper::from_handle_panic(action).action_set();
+
     let result = action_set.instance().destroy_action(action);
 
-    if result.into_raw() < 0 { return result; }
+    if result.into_raw() < 0 {
+        return result;
+    }
 
     let action = destroy_action_internal(action);
 
@@ -207,7 +184,7 @@ pub unsafe extern "system" fn destroy_action(
 }
 
 fn destroy_instance_internal(handle: xr::Instance) {
-    let instance = instances().remove(&handle.into_raw()).unwrap();
+    let instance = instances().remove(&handle).unwrap();
 
     for session in instance.1.sessions.write().unwrap().iter() {
         destroy_session_internal(session.handle);
@@ -221,7 +198,7 @@ fn destroy_instance_internal(handle: xr::Instance) {
 }
 
 fn destroy_session_internal(handle: xr::Session) -> Arc<SessionWrapper> {
-    let session = sessions().remove(&handle.into_raw()).unwrap().1;
+    let session = sessions().remove(&handle).unwrap().1;
 
     println!("Destroyed {:?}", handle);
 
@@ -229,7 +206,7 @@ fn destroy_session_internal(handle: xr::Session) -> Arc<SessionWrapper> {
 }
 
 fn destroy_action_set_internal(handle: xr::ActionSet) -> Arc<ActionSetWrapper> {
-    let action_set = action_sets().remove(&handle.into_raw()).unwrap().1;
+    let action_set = action_sets().remove(&handle).unwrap().1;
 
     for action in action_set.actions.write().unwrap().iter() {
         destroy_action_internal(action.handle);
@@ -241,7 +218,7 @@ fn destroy_action_set_internal(handle: xr::ActionSet) -> Arc<ActionSetWrapper> {
 }
 
 fn destroy_action_internal(handle: xr::Action) -> Arc<ActionWrapper> {
-    let action = actions().remove(&handle.into_raw()).unwrap().1;
+    let action = actions().remove(&handle).unwrap().1;
 
     println!("Destroyed {:?}", handle);
 

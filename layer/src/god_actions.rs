@@ -12,6 +12,7 @@ use std::ops::Add;
 use std::ptr;
 
 use crate::wrappers::InstanceWrapper;
+use crate::wrappers::SessionWrapper;
 
 pub fn create_god_action_sets(
     instance: &InstanceWrapper,
@@ -34,7 +35,6 @@ pub struct GodActionSet {
     pub handle: xr::ActionSet,
     pub subaction_paths: Vec<String>,
     pub god_actions: HashMap<xr::Path, GodAction>,
-    pub states: HashMap<xr::Path, GodState>,
     pub name: String,
 }
 
@@ -60,7 +60,6 @@ impl GodActionSet {
             handle,
             subaction_paths: profile_info.subaction_paths.clone(),
             god_actions: Default::default(),
-            states: Default::default(),
             name: profile_name.clone(),
         };
     
@@ -100,7 +99,7 @@ impl GodActionSet {
                         instance,
                         subpath.clone(),
                         Some("x"),
-                        &subaction_paths,
+                        subaction_paths.clone(),
                         ActionType::FloatInput,
                     )?;
 
@@ -108,7 +107,7 @@ impl GodActionSet {
                         instance,
                         subpath.clone(),
                         Some("y"),
-                        &subaction_paths,
+                        subaction_paths.clone(),
                         ActionType::FloatInput,
                     )?;
 
@@ -116,7 +115,7 @@ impl GodActionSet {
                         instance,
                         subpath.clone(),
                         None,
-                        &subaction_paths,
+                        subaction_paths.clone(),
                         ActionType::Vector2fInput,
                     )?;
                 }
@@ -125,7 +124,7 @@ impl GodActionSet {
                         instance,
                         subpath.clone(),
                         Some(feature.to_str()),
-                        &subaction_paths,
+                        subaction_paths.clone(),
                         feature.get_type(),
                     )?;
                 }
@@ -140,7 +139,7 @@ impl GodActionSet {
         instance: &InstanceWrapper,
         subpath: String,
         component: Option<&str>,
-        subaction_paths: &Vec<xr::Path>,
+        subaction_paths: Vec<xr::Path>,
         action_type: ActionType,
     ) -> Result<()> {
         let name = if let Some(component) = component {
@@ -158,27 +157,11 @@ impl GodActionSet {
         println!("Created God Action: {}, {:?}", &name, action_type);
 
         let mut handle = xr::Action::NULL;
-        let result = unsafe { 
-            (instance.core.create_action)(self.handle, create_info.as_raw(), &mut handle) 
+        let result = unsafe {
+            (instance.core.create_action)(self.handle, create_info.as_raw(), &mut handle)
         };
         if result.into_raw() < 0 {
             return Err(result);
-        }
-
-        if action_type.is_input() {
-            for subaction_path in subaction_paths {
-                let name = instance.path_to_string(*subaction_path)?.add(&name);
-                println!("{}", &name);
-                self.states.insert(
-                    instance.string_to_path(&name)?,
-                    GodState {
-                        action_handle: handle,
-                        name,
-                        subaction_path: *subaction_path,
-                        action_state: ActionState::new(action_type).unwrap(),
-                    },
-                );
-            }
         }
 
         self.god_actions.insert(
@@ -186,6 +169,7 @@ impl GodActionSet {
             GodAction {
                 handle,
                 name,
+                subaction_paths,
                 action_type,
             },
         );
@@ -197,6 +181,7 @@ impl GodActionSet {
 pub struct GodAction {
     pub handle: xr::Action,
     pub name: String,
+    pub subaction_paths: Vec<xr::Path>,
     pub action_type: ActionType,
 }
 
@@ -207,6 +192,11 @@ pub struct GodState {
     pub action_state: ActionState,
 }
 
+pub enum SubactionCollection<T> {
+    Singleton(T),
+    Subactions(HashMap<xr::Path, T>)
+}
+
 pub enum ActionState {
     Boolean(xr::ActionStateBoolean),
     Float(xr::ActionStateFloat),
@@ -215,7 +205,7 @@ pub enum ActionState {
 }
 
 impl ActionState {
-    fn new(action_type: ActionType) -> Option<ActionState> {
+    pub fn new(action_type: ActionType) -> Option<ActionState> {
         match action_type {
             ActionType::BooleanInput => Some(ActionState::Boolean(unsafe {
                 xr::ActionStateBoolean::out(ptr::null_mut()).assume_init()
@@ -230,6 +220,67 @@ impl ActionState {
                 xr::ActionStatePose::out(ptr::null_mut()).assume_init()
             })),
             _ => None,
+        }
+    }
+}
+
+impl GodState {
+    pub fn sync(&mut self, session: &SessionWrapper) -> Result<()> {
+        let get_info = self.get_info();
+        let result = match &mut self.action_state {
+            ActionState::Boolean(state) => {
+                session.get_action_state_boolean(&get_info, state)
+            },
+            ActionState::Float(state) => {
+                session.get_action_state_float(&get_info, state)
+            },
+            ActionState::Vector2f(state) => {
+                session.get_action_state_vector2f(&get_info, state)
+            },
+            ActionState::Pose(state) => {
+                session.get_action_state_pose(&get_info, state)
+            },
+        };
+        if result.into_raw() < 0 { 
+            Err(result)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn get_info(&self) -> xr::ActionStateGetInfo {
+        xr::ActionStateGetInfo {
+            ty: xr::ActionStateGetInfo::TYPE,
+            next: ptr::null(),
+            action: self.action_handle,
+            subaction_path: self.subaction_path,
+        }
+    }
+}
+
+impl<T> SubactionCollection<T> {
+    pub fn get_matching<'a>(&'a self, subaction_path: xr::Path) -> Result<Vec<&'a T>> {
+        if subaction_path == xr::Path::NULL {
+            Ok(match self {
+                SubactionCollection::Singleton(state) => {
+                    vec![state]
+                },
+                SubactionCollection::Subactions(state_map) => {
+                    state_map.values().collect::<Vec<_>>()
+                },
+            })
+        } else {
+            match self {
+                SubactionCollection::Singleton(_) => {
+                    Err(xr::Result::ERROR_PATH_UNSUPPORTED)
+                },
+                SubactionCollection::Subactions(state_map) => {
+                    match state_map.get(&subaction_path) {
+                        Some(state) => Ok(vec![state]),
+                        None => Err(xr::Result::ERROR_PATH_UNSUPPORTED),
+                    }
+                },
+            }
         }
     }
 }

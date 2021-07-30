@@ -3,6 +3,7 @@ mod wrappers;
 mod injections;
 mod util;
 mod god_actions;
+mod validation;
 
 use wrappers::*;
 use loader_interfaces::*;
@@ -126,13 +127,13 @@ unsafe extern "system" fn create_api_layer_instance(
     }
 
     //Add this instance to the wrapper map
-    instances().insert((*instance).into_raw(), Arc::new(wrapper));
+    instances().insert(*instance, Arc::new(wrapper));
 
     result
 }
 
 unsafe extern "system" fn instance_proc_addr(instance: xr::Instance, name: *const c_char, function: *mut Option<pfn::VoidFunction>) -> xr::Result {
-    let instance = InstanceWrapper::from_handle(instance);
+    let instance = InstanceWrapper::from_handle_panic(instance);
     let result = (instance.get_instance_proc_addr_next)(instance.handle, name, function);
 
     if result.into_raw() < 0 { return result; }
