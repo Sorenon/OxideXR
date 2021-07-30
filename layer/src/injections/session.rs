@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::RwLock;
 use std::ptr;
+use std::sync::RwLock;
 
-use crate::god_actions::{ActionState, SubactionCollection};
+use crate::god_actions::{self, ActionState, SubactionCollection};
 use crate::validation::Validate;
 use crate::wrappers::*;
 use common::serial::get_uuid;
@@ -12,6 +12,7 @@ use common::serial::write_json;
 use common::serial::CONFIG_DIR;
 use common::xrapplication_info::*;
 
+use openxr::ActionInput;
 use openxr::sys::{self as xr, Bool32};
 
 pub unsafe extern "system" fn attach_session_action_sets(
@@ -54,9 +55,53 @@ pub unsafe extern "system" fn attach_session_action_sets(
                 bindings.len()
             );
 
-            attached_actions.insert(action.handle, bindings);
-
             if ActionType::from_raw(action.action_type).is_input() {
+                //TODO check if action type is pose in order to comply with 11.5.1
+
+                let subaction_paths = &action.subaction_paths;
+                if subaction_paths.is_empty() {
+                    let mut vec = Vec::new();
+
+                    for (profile, bindings) in action.bindings.read().unwrap().iter() {
+                        let god_states = session.god_states.get(profile).unwrap();
+                        for binding in bindings {
+                            let god_state = god_states.get(binding).unwrap();
+                            vec.push(god_state.clone());
+                        }
+                    }
+
+                    attached_actions.insert(action.handle, SubactionCollection::Singleton(vec));
+                } else {
+                    let mut map = HashMap::new();
+
+                    for (profile, bindings) in action.bindings.read().unwrap().iter() {
+                        let god_states = session.god_states.get(profile).unwrap();
+                        for binding in bindings {
+                            let god_state = god_states.get(binding).unwrap();
+                            let binding_str = instance.path_to_string(*binding).unwrap();
+                            let subaction_path = subaction_paths
+                                .iter()
+                                .filter(|subaction_path| {
+                                    binding_str.starts_with(
+                                        &instance.path_to_string(**subaction_path).unwrap(),
+                                    )
+                                })
+                                .next()
+                                .unwrap();
+                            let vec = match map.get_mut(subaction_path) {
+                                Some(vec) => vec,
+                                None => {
+                                    map.insert(*subaction_path, Vec::new());
+                                    map.get_mut(subaction_path).unwrap()
+                                }
+                            };
+                            vec.push(god_state.clone());
+                        }
+                    }
+
+                    attached_actions.insert(action.handle, SubactionCollection::Subactions(map));
+                }
+
                 for (profile_name, bindings) in action.bindings.read().unwrap().iter() {
                     println!(" {}", instance.path_to_string(*profile_name).unwrap());
                     let states = session.god_states.get(profile_name).unwrap();
@@ -95,7 +140,7 @@ pub unsafe extern "system" fn attach_session_action_sets(
         attached_action_sets.insert(action_set.handle, attached_actions);
     }
 
-    if let Err(_) = session.attached_actions.set(attached_action_sets) {
+    if let Err(_) = session.attached_action_sets.set(attached_action_sets) {
         return xr::Result::ERROR_ACTIONSETS_ALREADY_ATTACHED;
     }
     if let Err(_) = session.cached_action_states.set(action_states) {
@@ -148,22 +193,36 @@ pub unsafe extern "system" fn sync_actions(
         god_state.write().unwrap().sync(&session).unwrap();
     }
 
-    let sets = std::slice::from_raw_parts(
+    let active_action_sets = std::slice::from_raw_parts(
         (*app_sync_info).active_action_sets,
         (*app_sync_info).count_active_action_sets as usize,
     );
-    let attached_actions = session.attached_actions.get().unwrap();
-    for set in sets {
-        if set.action_set.get_wrapper().is_none() {
+    let attached_actions = session.attached_action_sets.get().unwrap();
+    for active_action_set in active_action_sets {
+        if active_action_set.action_set.get_wrapper().is_none() {
             return xr::Result::ERROR_HANDLE_INVALID;
         }
-        let actions = match attached_actions.get(&set.action_set) {
+        let actions = match attached_actions.get(&active_action_set.action_set) {
             Some(actions) => actions,
             None => return xr::Result::ERROR_ACTIONSET_NOT_ATTACHED,
         };
-        for (action_handle, vec) in actions {
-            for (profile_name, bindings) in vec {
-                for binding in bindings {}
+        for (action_handle, subaction_bindings) in actions {
+            let action_cache_states = session.cached_action_states.get().unwrap().get(action_handle).unwrap().write().unwrap();
+            match &action_cache_states as &SubactionCollection<god_actions::ActionState> {
+                SubactionCollection::Singleton(cache_state) => {
+                    if let SubactionCollection::Singleton(bindings) = subaction_bindings {
+                        
+                    } else {
+                        panic!()
+                    }
+                },
+                SubactionCollection::Subactions(map) => {
+                    if let SubactionCollection::Subactions(bindings_map) = subaction_bindings {
+
+                    } else {
+                        panic!()
+                    }
+                },
             }
         }
     }
@@ -190,34 +249,35 @@ pub unsafe extern "system" fn get_action_state_boolean(
         Some(session) => session,
         None => return xr::Result::ERROR_HANDLE_INVALID,
     };
-    
-    let action_cached_states = match session.cached_action_states.get().unwrap().get(&get_info.action) {
+
+    let action_cached_states = match session
+        .cached_action_states
+        .get()
+        .unwrap()
+        .get(&get_info.action)
+    {
         Some(states) => states,
         None => return xr::Result::ERROR_ACTIONSET_NOT_ATTACHED,
-    }.read().unwrap();
+    }
+    .read()
+    .unwrap();
 
     let matching_cached_states = match action_cached_states.get_matching(get_info.subaction_path) {
         Ok(cached_states) => cached_states,
         Err(result) => return result,
     };
 
-    //TODO remove
-    assert!(matching_cached_states.len() == 1);
-
-    match matching_cached_states.first().unwrap() {
-        ActionState::Boolean(cached_state) => {
-            out_state.current_state = cached_state.changed_since_last_sync;
-            out_state.is_active = cached_state.is_active;
-            out_state.changed_since_last_sync = cached_state.changed_since_last_sync;
-        }
-        ActionState::Float(cached_state) => {
-            //TODO XR_VALVE_analog_threshold
-            out_state.current_state = Bool32::from(cached_state.current_state.abs() > 0.5);
-            out_state.is_active = cached_state.is_active;
-            out_state.changed_since_last_sync = cached_state.changed_since_last_sync;
-        }
-        _ => return xr::Result::ERROR_ACTION_TYPE_MISMATCH,
-    }
+    let state = match crate::god_actions::flatten_states_for_type(ActionType::BooleanInput, matching_cached_states.iter().map(|f| *f)) {
+        Ok(state) => if let ActionState::Boolean(state_bool) = state {
+            state_bool
+        } else {
+            panic!()
+        },
+        Err(result) => return result,
+    };
+    out_state.current_state = state.current_state;
+    out_state.is_active = state.is_active;
+    out_state.last_change_time = state.last_change_time;
 
     xr::Result::SUCCESS
 }

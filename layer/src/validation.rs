@@ -5,6 +5,7 @@ use openxr::Result;
 
 use crate::wrappers::*;
 
+//TODO implement on all used xr structs
 pub trait Validate {
     fn validate(&self) -> Result<()>;
 }

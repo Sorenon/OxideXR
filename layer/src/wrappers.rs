@@ -13,6 +13,7 @@ use std::sync::Weak;
 use std::sync::Arc;
 
 use crate::god_actions::ActionState;
+use crate::god_actions::GodState;
 use crate::god_actions::SubactionCollection;
 
 type HandleMap<H, T> = DashMap<H, Arc<T>>;
@@ -78,8 +79,13 @@ pub struct SessionWrapper {
     pub handle: xr::Session,
     pub instance: Weak<InstanceWrapper>,
 
-    pub god_states: HashMap<xr::Path/* interactionProfile */, HashMap<xr::Path /* binding */, Arc<RwLock<crate::god_actions::GodState>>>>,
-    pub attached_actions: OnceCell<HashMap<xr::ActionSet, HashMap<xr::Action, Vec<(xr::Path, Vec<xr::Path>)>>>>,
+    //The cached state of every input path
+    pub god_states: HashMap<xr::Path/* interactionProfile */, HashMap<xr::Path /* binding */, Arc<RwLock<GodState>>>>,
+
+    //The bindings for each attached input action
+    pub attached_action_sets: OnceCell<HashMap<xr::ActionSet, HashMap<xr::Action, SubactionCollection<Vec<Arc<RwLock<GodState>>>>>>>,
+
+    //The cached state of the attached application actions
     pub cached_action_states: OnceCell<HashMap<xr::Action, RwLock<SubactionCollection<ActionState>>>>,
 }
 
@@ -244,7 +250,7 @@ impl SessionWrapper {
         let mut wrapper = Self {
             handle,
             instance: Arc::downgrade(instance),
-            attached_actions: Default::default(),
+            attached_action_sets: Default::default(),
             cached_action_states: Default::default(),
             god_states: Default::default(),
         };

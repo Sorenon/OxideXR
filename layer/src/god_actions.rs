@@ -6,6 +6,7 @@ use openxr::Result;
 
 use openxr::builder as xr_builder;
 use openxr::sys as xr;
+use openxr::sys::Bool32;
 
 use std::collections::HashMap;
 use std::ops::Add;
@@ -47,31 +48,33 @@ impl GodActionSet {
         let mut handle = xr::ActionSet::NULL;
 
         let create_info = xr_builder::ActionSetCreateInfo::new()
-        .action_set_name(&sanitize(profile_name))
-        .localized_action_set_name(profile_name);
+            .action_set_name(&sanitize(profile_name))
+            .localized_action_set_name(profile_name);
 
         let result = unsafe {
             (instance.core.create_action_set)(instance.handle, create_info.as_raw(), &mut handle)
         };
 
-        if result.into_raw() < 0 { return Err(result); }
-    
+        if result.into_raw() < 0 {
+            return Err(result);
+        }
+
         let mut god_set = GodActionSet {
             handle,
             subaction_paths: profile_info.subaction_paths.clone(),
             god_actions: Default::default(),
             name: profile_name.clone(),
         };
-    
+
         println!(
             "Created God Set: {}, {}",
             &profile_info.title, &profile_name
         );
-    
+
         for (subpath, subpath_info) in &profile_info.subpaths {
             god_set.create_actions_for_subpath(instance, &subpath, &subpath_info)?;
         }
-    
+
         Ok(god_set)
     }
 
@@ -194,7 +197,7 @@ pub struct GodState {
 
 pub enum SubactionCollection<T> {
     Singleton(T),
-    Subactions(HashMap<xr::Path, T>)
+    Subactions(HashMap<xr::Path, T>),
 }
 
 pub enum ActionState {
@@ -228,20 +231,12 @@ impl GodState {
     pub fn sync(&mut self, session: &SessionWrapper) -> Result<()> {
         let get_info = self.get_info();
         let result = match &mut self.action_state {
-            ActionState::Boolean(state) => {
-                session.get_action_state_boolean(&get_info, state)
-            },
-            ActionState::Float(state) => {
-                session.get_action_state_float(&get_info, state)
-            },
-            ActionState::Vector2f(state) => {
-                session.get_action_state_vector2f(&get_info, state)
-            },
-            ActionState::Pose(state) => {
-                session.get_action_state_pose(&get_info, state)
-            },
+            ActionState::Boolean(state) => session.get_action_state_boolean(&get_info, state),
+            ActionState::Float(state) => session.get_action_state_float(&get_info, state),
+            ActionState::Vector2f(state) => session.get_action_state_vector2f(&get_info, state),
+            ActionState::Pose(state) => session.get_action_state_pose(&get_info, state),
         };
-        if result.into_raw() < 0 { 
+        if result.into_raw() < 0 {
             Err(result)
         } else {
             Ok(())
@@ -264,23 +259,74 @@ impl<T> SubactionCollection<T> {
             Ok(match self {
                 SubactionCollection::Singleton(state) => {
                     vec![state]
-                },
+                }
                 SubactionCollection::Subactions(state_map) => {
                     state_map.values().collect::<Vec<_>>()
-                },
+                }
             })
         } else {
             match self {
-                SubactionCollection::Singleton(_) => {
-                    Err(xr::Result::ERROR_PATH_UNSUPPORTED)
-                },
+                SubactionCollection::Singleton(_) => Err(xr::Result::ERROR_PATH_UNSUPPORTED),
                 SubactionCollection::Subactions(state_map) => {
                     match state_map.get(&subaction_path) {
                         Some(state) => Ok(vec![state]),
                         None => Err(xr::Result::ERROR_PATH_UNSUPPORTED),
                     }
-                },
+                }
             }
         }
     }
+}
+
+/*
+11.5.1. Resolving a single action bound to multiple inputs or outputs
+
+It is often the case that a single action will be bound to multiple physical inputs simultaneously. In these circumstances, the runtime must resolve the ambiguity in that multiple binding as follows:
+
+The current state value is selected based on the type of the action:
+
+    Boolean actions - The current state must be the result of a boolean OR of all bound inputs
+
+    Float actions - The current state must be the state of the input with the largest absolute value
+
+    Vector2 actions - The current state must be the state of the input with the longest length
+
+    Pose actions - The runtime must select a single pose source when the action is created or bound and use that value consistently. The runtime should use subaction paths specified by the application to make this choice where possible.
+
+    Haptic actions - The runtime must send output events to all bound haptic devices
+
+ */
+
+pub fn flatten_states_for_type<'a, I: Iterator<Item = &'a ActionState>>(
+    ty: ActionType,
+    iter: I,
+) -> Result<ActionState> {
+    let mut out = ActionState::new(ty).unwrap();
+
+    match &mut out {
+        ActionState::Boolean(acc) => {
+            for state in iter {
+                match state {
+                    ActionState::Boolean(cached_state) => {
+                        acc.current_state = cached_state.changed_since_last_sync;
+                        acc.is_active = cached_state.is_active;
+                        acc.changed_since_last_sync = cached_state.changed_since_last_sync;
+                    }
+                    ActionState::Float(cached_state) => {
+                        //TODO XR_VALVE_analog_threshold
+                        acc.current_state = Bool32::from(cached_state.current_state.abs() > 0.5);
+                        acc.is_active = cached_state.is_active;
+                        acc.changed_since_last_sync = cached_state.changed_since_last_sync;
+                    }
+                    _ => return Err(xr::Result::ERROR_ACTION_TYPE_MISMATCH),
+                }
+            }
+        },
+        ActionState::Float(out) => todo!(),
+        ActionState::Vector2f(out) => todo!(),
+        ActionState::Pose(out) => todo!(),
+
+        _ => return Err(xr::Result::ERROR_ACTION_TYPE_MISMATCH),
+    }
+    Ok(out)
 }
