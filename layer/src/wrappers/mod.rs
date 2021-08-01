@@ -12,49 +12,41 @@ use std::sync::RwLock;
 use std::sync::Weak;
 use std::sync::Arc;
 
-use crate::god_actions::ActionState;
+use crate::god_actions::CachedActionStatesEnum;
 use crate::god_actions::GodState;
 use crate::god_actions::SubactionCollection;
 
 type HandleMap<H, T> = DashMap<H, Arc<T>>;
 type HandleRef<'a, H, T> = dashmap::mapref::one::Ref<'a, H, Arc<T>>;
 
-static mut INSTANCES:   Option<HandleMap<xr::Instance, InstanceWrapper>> = None;
-static mut SESSIONS:    Option<HandleMap<xr::Session, SessionWrapper>> = None;
-static mut ACTIONS:     Option<HandleMap<xr::Action, ActionWrapper>> = None;
-static mut ACTION_SETS: Option<HandleMap<xr::ActionSet, ActionSetWrapper>> = None;
+static INSTANCES:   OnceCell<HandleMap<xr::Instance, InstanceWrapper>> = OnceCell::new();
+static SESSIONS:    OnceCell<HandleMap<xr::Session, SessionWrapper>> = OnceCell::new();
+static ACTIONS:     OnceCell<HandleMap<xr::Action, ActionWrapper>> = OnceCell::new();
+static ACTION_SETS: OnceCell<HandleMap<xr::ActionSet, ActionSetWrapper>> = OnceCell::new();
 
 pub unsafe fn static_init() {
-    if INSTANCES.is_none() {
-        INSTANCES = Some(DashMap::new());
-        SESSIONS = Some(DashMap::new());
-        ACTIONS = Some(DashMap::new());
-        ACTION_SETS = Some(DashMap::new());
+    if INSTANCES.get().is_none() {
+        INSTANCES.set(DashMap::new()).unwrap();
+        SESSIONS.set(DashMap::new()).map_err(|_| {}).unwrap();
+        ACTIONS.set(DashMap::new()).unwrap();
+        ACTION_SETS.set(DashMap::new()).unwrap();
     }
 }
 
 pub fn instances() -> &'static HandleMap<xr::Instance, InstanceWrapper> {
-    unsafe {
-        INSTANCES.as_ref().unwrap()
-    }
+    INSTANCES.get().unwrap()
 }
 
 pub fn sessions() -> &'static HandleMap<xr::Session, SessionWrapper> {
-    unsafe {
-        SESSIONS.as_ref().unwrap()
-    }
+    SESSIONS.get().unwrap()
 }
 
 pub fn action_sets() -> &'static HandleMap<xr::ActionSet, ActionSetWrapper> {
-    unsafe {
-        ACTION_SETS.as_ref().unwrap()
-    }
+    ACTION_SETS.get().unwrap()
 }
 
 pub fn actions() -> &'static HandleMap<xr::Action, ActionWrapper> {
-    unsafe {
-        ACTIONS.as_ref().unwrap()
-    }
+    ACTIONS.get().unwrap()
 }
 
 pub struct InstanceWrapper {
@@ -79,14 +71,14 @@ pub struct SessionWrapper {
     pub handle: xr::Session,
     pub instance: Weak<InstanceWrapper>,
 
-    //The cached state of every input path
+    //The cached state of every input path (updated every sync call)
     pub god_states: HashMap<xr::Path/* interactionProfile */, HashMap<xr::Path /* binding */, Arc<RwLock<GodState>>>>,
 
     //The bindings for each attached input action
     pub attached_action_sets: OnceCell<HashMap<xr::ActionSet, HashMap<xr::Action, SubactionCollection<Vec<Arc<RwLock<GodState>>>>>>>,
 
-    //The cached state of the attached application actions
-    pub cached_action_states: OnceCell<HashMap<xr::Action, RwLock<SubactionCollection<ActionState>>>>,
+    //The cached state of the attached application actions (updated every sync call)
+    pub cached_action_states: OnceCell<HashMap<xr::Action, RwLock<CachedActionStatesEnum>>>,
 }
 
 #[derive(Debug)]
@@ -239,9 +231,7 @@ impl InstanceWrapper {
     }
 
     pub fn from_handle_panic<'a>(handle: xr::Instance) -> HandleRef<'a, xr::Instance, InstanceWrapper> {
-        unsafe {
-            INSTANCES.as_ref().unwrap().get(&handle).unwrap()
-        }
+        INSTANCES.get().unwrap().get(&handle).unwrap()
     }
 }
 
@@ -254,25 +244,6 @@ impl SessionWrapper {
             cached_action_states: Default::default(),
             god_states: Default::default(),
         };
-    
-        let god_action_sets = instance
-            .god_action_sets
-            .values()
-            .map(|container| container.handle)
-            .collect::<Vec<_>>();
-    
-        let attach_info = xr::SessionActionSetsAttachInfo {
-            ty: xr::SessionActionSetsAttachInfo::TYPE,
-            next: ptr::null(),
-            count_action_sets: god_action_sets.len() as u32,
-            action_sets: god_action_sets.as_ptr(),
-        };
-    
-        let result = wrapper.attach_session_action_sets(&attach_info);
-    
-        if result.into_raw() < 0 {
-            return Err(result);
-        }
     
         for (profile_name, god_action_set) in &instance.god_action_sets {
             let states = match wrapper.god_states.get_mut(profile_name) {
@@ -295,7 +266,7 @@ impl SessionWrapper {
                                 action_handle: god_action.handle,
                                 name,
                                 subaction_path: *subaction_path,
-                                action_state: crate::god_actions::ActionState::new(god_action.action_type).unwrap(),
+                                action_state: crate::god_actions::GodActionStateEnum::new(god_action.action_type).unwrap(),
                             })),
                         );
                     }
@@ -316,8 +287,30 @@ impl SessionWrapper {
                 count_suggested_bindings: bindings.len() as u32,
                 suggested_bindings: bindings.as_ptr(),
             };
-    
-            instance.suggest_interaction_profile_bindings(&suggested_bindings);
+
+            let result = instance.suggest_interaction_profile_bindings(&suggested_bindings);
+            if result.into_raw() < 0 {
+                return Err(result);
+            }
+        }
+
+        let god_action_sets = instance
+            .god_action_sets
+            .values()
+            .map(|container| container.handle)
+            .collect::<Vec<_>>();
+
+        let attach_info = xr::SessionActionSetsAttachInfo {
+            ty: xr::SessionActionSetsAttachInfo::TYPE,
+            next: ptr::null(),
+            count_action_sets: god_action_sets.len() as u32,
+            action_sets: god_action_sets.as_ptr(),
+        };
+
+        let result = wrapper.attach_session_action_sets(&attach_info);
+
+        if result.into_raw() < 0 {
+            return Err(result);
         }
         
         Ok(wrapper)
@@ -393,9 +386,7 @@ impl SessionWrapper {
     }
 
     pub fn from_handle_panic<'a>(handle: xr::Session) -> HandleRef<'a, xr::Session, SessionWrapper>  {
-        unsafe {
-            SESSIONS.as_ref().unwrap().get(&handle).unwrap()
-        }
+        SESSIONS.get().unwrap().get(&handle).unwrap()
     }
 }
 
@@ -417,9 +408,7 @@ impl ActionSetWrapper {
     }
 
     pub fn from_handle_panic<'a>(handle: xr::ActionSet) -> HandleRef<'a, xr::ActionSet, ActionSetWrapper> {
-        unsafe {
-            ACTION_SETS.as_ref().unwrap().get(&handle).unwrap()
-        }
+        ACTION_SETS.get().unwrap().get(&handle).unwrap()
     }
 }
 
@@ -430,9 +419,7 @@ impl ActionWrapper {
     }
 
     pub fn from_handle_panic<'a>(handle: xr::Action) -> HandleRef<'a, xr::Action, ActionWrapper> {
-        unsafe {
-            ACTIONS.as_ref().unwrap().get(&handle).unwrap()
-        }
+        ACTIONS.get().unwrap().get(&handle).unwrap()
     }
 }
 
@@ -483,6 +470,14 @@ pub trait WrappedHandle {
 
     fn get_wrapper<'a>(self) -> Option<HandleRef<'a, Self, Self::Wrapper>> where Self: Sized + 'static {
         Self::Wrapper::from_handle(self)
+    }
+
+    fn try_get_wrapper<'a>(self) -> Result<HandleRef<'a, Self, Self::Wrapper>> where Self: Sized + 'static {
+        Self::get_wrapper(self).map_or_else(|| {
+            Err(xr::Result::ERROR_HANDLE_INVALID)
+        }, |wrapper| {
+            Ok(wrapper)
+        })
     }
 }
 

@@ -18,6 +18,11 @@ pub unsafe extern "system" fn suggest_interaction_profile_bindings(
     let action_suggested_bindings = std::slice::from_raw_parts((*suggested_bindings).suggested_bindings, (*suggested_bindings).count_suggested_bindings as usize);
 
     let profile_path = &(*suggested_bindings).interaction_profile;
+
+                //SSSSSSSSSSSSS
+                if profile_path != &instance.string_to_path("/interaction_profiles/oculus/touch_controller").unwrap() {return  xr::Result::SUCCESS;}
+
+
     let god_set = instance.god_action_sets.get(&(*suggested_bindings).interaction_profile).unwrap();
     println!("Bindings: {}", god_set.name);
     for action_suggested_binding in action_suggested_bindings {

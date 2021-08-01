@@ -36,3 +36,39 @@ impl Validate for xr::ActionStateBoolean {
         return Ok(());
     }
 }
+
+impl Validate for xr::ActionStateFloat {
+    fn validate(&self) -> Result<()> {
+        if self.ty != xr::ActionStateFloat::TYPE {
+            return Err(xr::Result::ERROR_VALIDATION_FAILURE);
+        }
+        if self.next != ptr::null_mut() {
+            return Err(xr::Result::ERROR_VALIDATION_FAILURE);
+        }
+        return Ok(());
+    }
+}
+
+impl Validate for xr::ActionStateVector2f {
+    fn validate(&self) -> Result<()> {
+        if self.ty != xr::ActionStateVector2f::TYPE {
+            return Err(xr::Result::ERROR_VALIDATION_FAILURE);
+        }
+        if self.next != ptr::null_mut() {
+            return Err(xr::Result::ERROR_VALIDATION_FAILURE);
+        }
+        return Ok(());
+    }
+}
+
+impl Validate for xr::ActionStatePose {
+    fn validate(&self) -> Result<()> {
+        if self.ty != xr::ActionStatePose::TYPE {
+            return Err(xr::Result::ERROR_VALIDATION_FAILURE);
+        }
+        if self.next != ptr::null_mut() {
+            return Err(xr::Result::ERROR_VALIDATION_FAILURE);
+        }
+        return Ok(());
+    }
+}

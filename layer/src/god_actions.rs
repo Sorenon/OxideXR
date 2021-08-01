@@ -6,8 +6,10 @@ use openxr::Result;
 
 use openxr::builder as xr_builder;
 use openxr::sys as xr;
-use openxr::sys::Bool32;
+use openxr::Vector2f;
 
+use core::f32;
+use std::cmp;
 use std::collections::HashMap;
 use std::ops::Add;
 use std::ptr;
@@ -51,9 +53,7 @@ impl GodActionSet {
             .action_set_name(&sanitize(profile_name))
             .localized_action_set_name(profile_name);
 
-        let result = unsafe {
-            (instance.core.create_action_set)(instance.handle, create_info.as_raw(), &mut handle)
-        };
+        let result = instance.create_action_set(create_info.as_raw(), &mut handle);
 
         if result.into_raw() < 0 {
             return Err(result);
@@ -192,7 +192,19 @@ pub struct GodState {
     pub action_handle: xr::Action,
     pub name: String,
     pub subaction_path: xr::Path,
-    pub action_state: ActionState,
+    pub action_state: GodActionStateEnum,
+}
+
+pub enum CachedActionStatesEnum {
+    Boolean(CachedActionStates<openxr::ActionState<bool>>),
+    Float(CachedActionStates<openxr::ActionState<f32>>),
+    Vector2f(CachedActionStates<openxr::ActionState<openxr::Vector2f>>),
+    Pose(CachedActionStates<ActionStatePose>),
+}
+
+pub struct CachedActionStates<T: OxideActionState> {
+    pub main_state: T,
+    pub subaction_states: Option<HashMap<xr::Path, T>>,
 }
 
 pub enum SubactionCollection<T> {
@@ -200,29 +212,128 @@ pub enum SubactionCollection<T> {
     Subactions(HashMap<xr::Path, T>),
 }
 
-pub enum ActionState {
-    Boolean(xr::ActionStateBoolean),
-    Float(xr::ActionStateFloat),
-    Vector2f(xr::ActionStateVector2f),
-    Pose(xr::ActionStatePose),
+#[derive(Copy, Clone)]
+pub enum GodActionStateEnum {
+    Boolean(openxr::ActionState<bool>),
+    Float(openxr::ActionState<f32>),
+    Vector2f(openxr::ActionState<Vector2f>),
+    Pose(ActionStatePose),
 }
 
-impl ActionState {
-    pub fn new(action_type: ActionType) -> Option<ActionState> {
+impl CachedActionStatesEnum {
+    pub fn new(action_type: ActionType, subaction_paths: &Vec<xr::Path>) -> Self {
         match action_type {
-            ActionType::BooleanInput => Some(ActionState::Boolean(unsafe {
-                xr::ActionStateBoolean::out(ptr::null_mut()).assume_init()
+            ActionType::BooleanInput => CachedActionStatesEnum::Boolean(CachedActionStates::new(
+                openxr::ActionState::<bool> {
+                    current_state: false,
+                    changed_since_last_sync: false,
+                    last_change_time: xr::Time::from_nanos(0),
+                    is_active: false,
+                },
+                subaction_paths,
+            )),
+            ActionType::FloatInput => CachedActionStatesEnum::Float(CachedActionStates::new(
+                openxr::ActionState::<f32> {
+                    current_state: 0f32,
+                    changed_since_last_sync: false,
+                    last_change_time: xr::Time::from_nanos(0),
+                    is_active: false,
+                },
+                subaction_paths,
+            )),
+            ActionType::Vector2fInput => CachedActionStatesEnum::Vector2f(CachedActionStates::new(
+                openxr::ActionState::<openxr::Vector2f> {
+                    current_state: Default::default(),
+                    changed_since_last_sync: false,
+                    last_change_time: xr::Time::from_nanos(0),
+                    is_active: false,
+                },
+                subaction_paths,
+            )),
+            ActionType::PoseInput => CachedActionStatesEnum::Pose(CachedActionStates::new(
+                ActionStatePose { is_active: false },
+                subaction_paths,
+            )),
+            _ => panic!(),
+        }
+    }
+}
+
+impl<T: OxideActionState> CachedActionStates<T> {
+    pub fn new(default_state: T, subaction_paths: &Vec<xr::Path>) -> Self
+    where
+        T: Clone,
+    {
+        let subaction_states = if subaction_paths.is_empty() {
+            None
+        } else {
+            Some(
+                subaction_paths
+                    .iter()
+                    .map(|p| (*p, default_state.clone()))
+                    .collect::<HashMap<_, _>>(),
+            )
+        };
+
+        Self {
+            main_state: default_state,
+            subaction_states,
+        }
+    }
+
+    pub fn get_state<'a>(&'a self, subaction_path: xr::Path) -> Result<&'a T> {
+        if subaction_path == xr::Path::NULL {
+            Ok(&self.main_state)
+        } else {
+            match &self.subaction_states {
+                Some(subaction_states) => match subaction_states.get(&subaction_path) {
+                    Some(state) => Ok(state),
+                    None => Err(xr::Result::ERROR_PATH_UNSUPPORTED),
+                },
+                None => Err(xr::Result::ERROR_PATH_UNSUPPORTED),
+            }
+        }
+    }
+}
+
+impl GodActionStateEnum {
+    pub fn new(action_type: ActionType) -> Option<GodActionStateEnum> {
+        match action_type {
+            ActionType::BooleanInput => {
+                Some(GodActionStateEnum::Boolean(openxr::ActionState::<bool> {
+                    current_state: false,
+                    changed_since_last_sync: false,
+                    last_change_time: xr::Time::from_nanos(0),
+                    is_active: false,
+                }))
+            }
+            ActionType::FloatInput => Some(GodActionStateEnum::Float(openxr::ActionState::<f32> {
+                current_state: 0f32,
+                changed_since_last_sync: false,
+                last_change_time: xr::Time::from_nanos(0),
+                is_active: false,
             })),
-            ActionType::FloatInput => Some(ActionState::Float(unsafe {
-                xr::ActionStateFloat::out(ptr::null_mut()).assume_init()
+            ActionType::Vector2fInput => Some(GodActionStateEnum::Vector2f(openxr::ActionState::<
+                openxr::Vector2f,
+            > {
+                current_state: openxr::Vector2f::default(),
+                changed_since_last_sync: false,
+                last_change_time: xr::Time::from_nanos(0),
+                is_active: false,
             })),
-            ActionType::Vector2fInput => Some(ActionState::Vector2f(unsafe {
-                xr::ActionStateVector2f::out(ptr::null_mut()).assume_init()
-            })),
-            ActionType::PoseInput => Some(ActionState::Pose(unsafe {
-                xr::ActionStatePose::out(ptr::null_mut()).assume_init()
+            ActionType::PoseInput => Some(GodActionStateEnum::Pose(ActionStatePose {
+                is_active: false,
             })),
             _ => None,
+        }
+    }
+
+    pub fn get_inner<'a>(&'a self) -> &'a dyn OxideActionState {
+        match self {
+            GodActionStateEnum::Boolean(inner) => inner,
+            GodActionStateEnum::Float(inner) => inner,
+            GodActionStateEnum::Vector2f(inner) => inner,
+            GodActionStateEnum::Pose(inner) => inner,
         }
     }
 }
@@ -231,10 +342,69 @@ impl GodState {
     pub fn sync(&mut self, session: &SessionWrapper) -> Result<()> {
         let get_info = self.get_info();
         let result = match &mut self.action_state {
-            ActionState::Boolean(state) => session.get_action_state_boolean(&get_info, state),
-            ActionState::Float(state) => session.get_action_state_float(&get_info, state),
-            ActionState::Vector2f(state) => session.get_action_state_vector2f(&get_info, state),
-            ActionState::Pose(state) => session.get_action_state_pose(&get_info, state),
+            GodActionStateEnum::Boolean(state) => {
+                let mut state_xr = xr::ActionStateBoolean::out(ptr::null_mut());
+                let result = session.get_action_state_boolean(&get_info, state_xr.as_mut_ptr());
+                // println!("{}", result);
+                if result.into_raw() < 0 {
+                    result
+                } else {
+                    unsafe {
+                        let state_xr = state_xr.assume_init();
+                        state.current_state = state_xr.current_state.into();
+                        // println!("{}, {}", state.current_state, state.is_active);
+                        state.is_active = state_xr.is_active.into();
+                        state.last_change_time = state_xr.last_change_time.into();
+                        state.changed_since_last_sync = state_xr.changed_since_last_sync.into();
+                    }
+                    result
+                }
+            }
+            GodActionStateEnum::Float(state) => {
+                let mut state_xr = xr::ActionStateFloat::out(ptr::null_mut());
+                let result = session.get_action_state_float(&get_info, state_xr.as_mut_ptr());
+                if result.into_raw() < 0 {
+                    result
+                } else {
+                    unsafe {
+                        let state_xr = state_xr.assume_init();
+                        state.current_state = state_xr.current_state.into();
+                        state.is_active = state_xr.is_active.into();
+                        state.last_change_time = state_xr.last_change_time.into();
+                        state.changed_since_last_sync = state_xr.changed_since_last_sync.into();
+                    }
+                    result
+                }
+            }
+            GodActionStateEnum::Vector2f(state) => {
+                let mut state_xr = xr::ActionStateVector2f::out(ptr::null_mut());
+                let result = session.get_action_state_vector2f(&get_info, state_xr.as_mut_ptr());
+                if result.into_raw() < 0 {
+                    result
+                } else {
+                    unsafe {
+                        let state_xr = state_xr.assume_init();
+                        state.current_state = state_xr.current_state.into();
+                        state.is_active = state_xr.is_active.into();
+                        state.last_change_time = state_xr.last_change_time.into();
+                        state.changed_since_last_sync = state_xr.changed_since_last_sync.into();
+                    }
+                    result
+                }
+            }
+            GodActionStateEnum::Pose(state) => {
+                let mut state_xr = xr::ActionStatePose::out(ptr::null_mut());
+                let result = session.get_action_state_pose(&get_info, state_xr.as_mut_ptr());
+                if result.into_raw() < 0 {
+                    result
+                } else {
+                    unsafe {
+                        let state_xr = state_xr.assume_init();
+                        state.is_active = state_xr.is_active.into();
+                    }
+                    result
+                }
+            }
         };
         if result.into_raw() < 0 {
             Err(result)
@@ -253,80 +423,255 @@ impl GodState {
     }
 }
 
-impl<T> SubactionCollection<T> {
-    pub fn get_matching<'a>(&'a self, subaction_path: xr::Path) -> Result<Vec<&'a T>> {
-        if subaction_path == xr::Path::NULL {
-            Ok(match self {
-                SubactionCollection::Singleton(state) => {
-                    vec![state]
-                }
-                SubactionCollection::Subactions(state_map) => {
-                    state_map.values().collect::<Vec<_>>()
-                }
-            })
-        } else {
-            match self {
-                SubactionCollection::Singleton(_) => Err(xr::Result::ERROR_PATH_UNSUPPORTED),
-                SubactionCollection::Subactions(state_map) => {
-                    match state_map.get(&subaction_path) {
-                        Some(state) => Ok(vec![state]),
-                        None => Err(xr::Result::ERROR_PATH_UNSUPPORTED),
-                    }
+#[derive(Debug, Clone, Copy)]
+pub struct ActionStatePose {
+    pub is_active: bool,
+}
+
+pub trait OxideActionState {
+    /// 11.5.1. Resolving a single action bound to multiple inputs or outputs
+    ///
+    /// It is often the case that a single action will be bound to multiple physical inputs simultaneously. In these circumstances, the runtime must resolve the ambiguity in that multiple binding as follows:
+    ///
+    /// The current state value is selected based on the type of the action:
+    ///
+    /// Boolean actions - The current state must be the result of a boolean OR of all bound inputs
+    ///
+    /// Float actions - The current state must be the state of the input with the largest absolute value
+    ///
+    /// Vector2 actions - The current state must be the state of the input with the longest length
+    fn sync_from_god_states<'a, I: Iterator<Item = GodActionStateEnum>>(
+        &mut self,
+        god_states: I,
+    ) -> Result<()>
+    where
+        Self: Sized;
+
+    fn get_scalar(&self) -> Result<f32>;
+    fn get_bool(&self) -> Result<bool>;
+    fn last_change_time(&self) -> Result<xr::Time>;
+    fn is_active(&self) -> bool;
+}
+
+impl OxideActionState for openxr::ActionState<bool> {
+    fn sync_from_god_states<'a, I: Iterator<Item = GodActionStateEnum>>(
+        &mut self,
+        god_states: I,
+    ) -> Result<()>
+    where
+        Self: Sized,
+    {
+        self.is_active = false;
+        self.changed_since_last_sync = false;
+
+        let mut new_state = false;
+        let mut new_last_change_time = 0;
+
+        //The current state must be the result of a boolean OR of all bound inputs
+        for god_state in god_states.filter(|e| e.get_inner().is_active()) {
+            let god_state = god_state.get_inner();
+            self.is_active = true;
+            if new_last_change_time == 0 {
+                new_last_change_time = god_state.last_change_time()?.as_nanos();
+            }
+            if god_state.get_bool()? == true {
+                new_state = true;
+                //We want the time of the earliest change to true
+                new_last_change_time = cmp::min(
+                    new_last_change_time,
+                    god_state.last_change_time()?.as_nanos(),
+                );
+            } else {
+                if new_state == false {
+                    //We want the time of the latest change to false
+                    new_last_change_time = cmp::max(
+                        new_last_change_time,
+                        god_state.last_change_time()?.as_nanos(),
+                    )
                 }
             }
         }
+
+        if !self.is_active {
+            self.current_state = false;
+            self.last_change_time = xr::Time::from_nanos(0);
+        } else {
+            if self.current_state != new_state {
+                debug_assert!(new_last_change_time > self.last_change_time.as_nanos()); //No time travel please, this crashes for some reason
+                self.current_state = new_state;
+                self.last_change_time = xr::Time::from_nanos(new_last_change_time);
+                self.changed_since_last_sync = true;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn get_scalar(&self) -> Result<f32> {
+        Ok(if self.current_state { 1f32 } else { 0f32 })
+    }
+
+    fn is_active(&self) -> bool {
+        self.is_active
+    }
+
+    fn last_change_time(&self) -> Result<xr::Time> {
+        Ok(self.last_change_time)
+    }
+
+    fn get_bool(&self) -> Result<bool> {
+        Ok(self.current_state)
     }
 }
 
-/*
-11.5.1. Resolving a single action bound to multiple inputs or outputs
+impl OxideActionState for openxr::ActionState<f32> {
+    fn sync_from_god_states<'a, I: Iterator<Item = GodActionStateEnum>>(
+        &mut self,
+        states: I,
+    ) -> Result<()>
+    where
+        Self: Sized,
+    {
+        self.is_active = false;
+        self.changed_since_last_sync = false;
 
-It is often the case that a single action will be bound to multiple physical inputs simultaneously. In these circumstances, the runtime must resolve the ambiguity in that multiple binding as follows:
+        let mut new_state = 0f32;
+        let mut new_last_change_time = xr::Time::from_nanos(0);
 
-The current state value is selected based on the type of the action:
-
-    Boolean actions - The current state must be the result of a boolean OR of all bound inputs
-
-    Float actions - The current state must be the state of the input with the largest absolute value
-
-    Vector2 actions - The current state must be the state of the input with the longest length
-
-    Pose actions - The runtime must select a single pose source when the action is created or bound and use that value consistently. The runtime should use subaction paths specified by the application to make this choice where possible.
-
-    Haptic actions - The runtime must send output events to all bound haptic devices
-
- */
-
-pub fn flatten_states_for_type<'a, I: Iterator<Item = &'a ActionState>>(
-    ty: ActionType,
-    iter: I,
-) -> Result<ActionState> {
-    let mut out = ActionState::new(ty).unwrap();
-
-    match &mut out {
-        ActionState::Boolean(acc) => {
-            for state in iter {
-                match state {
-                    ActionState::Boolean(cached_state) => {
-                        acc.current_state = cached_state.changed_since_last_sync;
-                        acc.is_active = cached_state.is_active;
-                        acc.changed_since_last_sync = cached_state.changed_since_last_sync;
-                    }
-                    ActionState::Float(cached_state) => {
-                        //TODO XR_VALVE_analog_threshold
-                        acc.current_state = Bool32::from(cached_state.current_state.abs() > 0.5);
-                        acc.is_active = cached_state.is_active;
-                        acc.changed_since_last_sync = cached_state.changed_since_last_sync;
-                    }
-                    _ => return Err(xr::Result::ERROR_ACTION_TYPE_MISMATCH),
-                }
+        //The current state must be the state of the input with the largest absolute value
+        for iter_state in states.filter(|e| e.get_inner().is_active()) {
+            let iter_state = iter_state.get_inner();
+            self.is_active = true;
+            if iter_state.get_scalar()?.abs() > new_state.abs() {
+                new_state = iter_state.get_scalar()?;
+                new_last_change_time = iter_state.last_change_time()?;
             }
-        },
-        ActionState::Float(out) => todo!(),
-        ActionState::Vector2f(out) => todo!(),
-        ActionState::Pose(out) => todo!(),
+        }
 
-        _ => return Err(xr::Result::ERROR_ACTION_TYPE_MISMATCH),
+        if !self.is_active {
+            self.current_state = 0f32;
+            self.last_change_time = xr::Time::from_nanos(0);
+        } else {
+            if self.current_state != new_state {
+                debug_assert!(new_last_change_time.as_nanos() > self.last_change_time.as_nanos()); //No time travel please
+                self.current_state = new_state;
+                self.last_change_time = new_last_change_time;
+                self.changed_since_last_sync = true;
+            }
+        }
+
+        Ok(())
     }
-    Ok(out)
+
+    fn get_scalar(&self) -> Result<f32> {
+        Ok(self.current_state)
+    }
+
+    fn get_bool(&self) -> Result<bool> {
+        //TODO VALVE
+        Ok(self.current_state.abs() > 0.5)
+    }
+
+    fn is_active(&self) -> bool {
+        self.is_active
+    }
+
+    fn last_change_time(&self) -> Result<xr::Time> {
+        Ok(self.last_change_time)
+    }
+}
+
+impl OxideActionState for openxr::ActionState<Vector2f> {
+    fn sync_from_god_states<'a, I: Iterator<Item = GodActionStateEnum>>(
+        &mut self,
+        states: I,
+    ) -> Result<()>
+    where
+        Self: Sized,
+    {
+        self.is_active = false;
+        self.changed_since_last_sync = false;
+
+        let mut new_state = Default::default();
+        let mut new_last_change_time = xr::Time::from_nanos(0);
+
+        fn len2(vec: openxr::Vector2f) -> f32 {
+            return vec.x * vec.x + vec.y * vec.y;
+        }
+
+        //The current state must be the state of the input with the longest length
+        for iter_state in states.filter(|e| e.get_inner().is_active()) {
+            if let GodActionStateEnum::Vector2f(iter_state) = iter_state {
+                self.is_active = true;
+                if len2(iter_state.current_state) >= len2(new_state) {
+                    new_state = iter_state.current_state;
+                    new_last_change_time = iter_state.last_change_time;
+                }
+            } else {
+                panic!();
+            }
+        }
+
+        if !self.is_active {
+            self.current_state = Default::default();
+            self.last_change_time = xr::Time::from_nanos(0);
+        } else {
+            if self.current_state != new_state {
+                debug_assert!(new_last_change_time.as_nanos() > self.last_change_time.as_nanos()); //No time travel please
+                self.current_state = new_state;
+                self.last_change_time = new_last_change_time;
+                self.changed_since_last_sync = true;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn get_scalar(&self) -> Result<f32> {
+        Err(xr::Result::ERROR_ACTION_TYPE_MISMATCH)
+    }
+
+    fn get_bool(&self) -> Result<bool> {
+        Err(xr::Result::ERROR_ACTION_TYPE_MISMATCH)
+    }
+
+    fn is_active(&self) -> bool {
+        self.is_active
+    }
+
+    fn last_change_time(&self) -> Result<xr::Time> {
+        Ok(self.last_change_time)
+    }
+}
+
+impl OxideActionState for ActionStatePose {
+    fn sync_from_god_states<'a, I: Iterator<Item = GodActionStateEnum>>(
+        &mut self,
+        states: I,
+    ) -> Result<()>
+    where
+        Self: Sized,
+    {
+        self.is_active = states
+            .filter(|e| e.get_inner().is_active())
+            .next()
+            .is_some();
+        Ok(())
+    }
+
+    fn get_scalar(&self) -> Result<f32> {
+        Err(xr::Result::ERROR_ACTION_TYPE_MISMATCH)
+    }
+
+    fn get_bool(&self) -> Result<bool> {
+        Err(xr::Result::ERROR_ACTION_TYPE_MISMATCH)
+    }
+
+    fn is_active(&self) -> bool {
+        self.is_active
+    }
+
+    fn last_change_time(&self) -> Result<xr::Time> {
+        Err(xr::Result::ERROR_ACTION_TYPE_MISMATCH)
+    }
 }

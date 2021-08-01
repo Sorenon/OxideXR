@@ -3,7 +3,9 @@ use std::path::Path;
 use std::ptr;
 use std::sync::RwLock;
 
-use crate::god_actions::{self, ActionState, SubactionCollection};
+use crate::god_actions::{
+    self, CachedActionStatesEnum, GodActionStateEnum, OxideActionState, SubactionCollection,
+};
 use crate::validation::Validate;
 use crate::wrappers::*;
 use common::serial::get_uuid;
@@ -12,8 +14,8 @@ use common::serial::write_json;
 use common::serial::CONFIG_DIR;
 use common::xrapplication_info::*;
 
-use openxr::ActionInput;
 use openxr::sys::{self as xr, Bool32};
+use openxr::ActionInput;
 
 pub unsafe extern "system" fn attach_session_action_sets(
     session: xr::Session,
@@ -32,10 +34,13 @@ pub unsafe extern "system" fn attach_session_action_sets(
     );
 
     let mut attached_action_sets = HashMap::new();
-    let mut action_states = HashMap::new();
+    let mut cached_action_states = HashMap::new();
 
     for action_set in action_sets {
-        let action_set = ActionSetWrapper::from_handle_panic(*action_set);
+        let action_set = match action_set.get_wrapper() {
+            Some(action_set) => action_set,
+            None => return xr::Result::ERROR_HANDLE_INVALID,
+        };
 
         let mut attached_actions = HashMap::new();
 
@@ -56,8 +61,6 @@ pub unsafe extern "system" fn attach_session_action_sets(
             );
 
             if ActionType::from_raw(action.action_type).is_input() {
-                //TODO check if action type is pose in order to comply with 11.5.1
-
                 let subaction_paths = &action.subaction_paths;
                 if subaction_paths.is_empty() {
                     let mut vec = Vec::new();
@@ -110,31 +113,13 @@ pub unsafe extern "system" fn attach_session_action_sets(
                     }
                 }
 
-                let subaction_paths = &action.subaction_paths;
-                if subaction_paths.is_empty() {
-                    action_states.insert(
-                        action.handle,
-                        RwLock::new(SubactionCollection::Singleton(
-                            ActionState::new(ActionType::from_raw(action.action_type)).unwrap(),
-                        )),
-                    );
-                } else {
-                    action_states.insert(
-                        action.handle,
-                        RwLock::new(SubactionCollection::Subactions(
-                            subaction_paths
-                                .iter()
-                                .map(|subaction_path| {
-                                    (
-                                        *subaction_path,
-                                        ActionState::new(ActionType::from_raw(action.action_type))
-                                            .unwrap(),
-                                    )
-                                })
-                                .collect::<HashMap<_, _>>(),
-                        )),
-                    );
-                }
+                cached_action_states.insert(
+                    action.handle,
+                    RwLock::new(CachedActionStatesEnum::new(
+                        ActionType::from_raw(action.action_type),
+                        &subaction_paths,
+                    )),
+                );
             }
         }
         attached_action_sets.insert(action_set.handle, attached_actions);
@@ -143,7 +128,7 @@ pub unsafe extern "system" fn attach_session_action_sets(
     if let Err(_) = session.attached_action_sets.set(attached_action_sets) {
         return xr::Result::ERROR_ACTIONSETS_ALREADY_ATTACHED;
     }
-    if let Err(_) = session.cached_action_states.set(action_states) {
+    if let Err(_) = session.cached_action_states.set(cached_action_states) {
         return xr::Result::ERROR_ACTIONSETS_ALREADY_ATTACHED;
     }
 
@@ -207,20 +192,57 @@ pub unsafe extern "system" fn sync_actions(
             None => return xr::Result::ERROR_ACTIONSET_NOT_ATTACHED,
         };
         for (action_handle, subaction_bindings) in actions {
-            let action_cache_states = session.cached_action_states.get().unwrap().get(action_handle).unwrap().write().unwrap();
-            match &action_cache_states as &SubactionCollection<god_actions::ActionState> {
-                SubactionCollection::Singleton(cache_state) => {
-                    if let SubactionCollection::Singleton(bindings) = subaction_bindings {
-                        
-                    } else {
-                        panic!()
+            let mut action_cache_states = session
+                .cached_action_states
+                .get()
+                .unwrap()
+                .get(action_handle)
+                .unwrap()
+                .write()
+                .unwrap();
+            match &mut action_cache_states as &mut CachedActionStatesEnum {
+                CachedActionStatesEnum::Boolean(states) => match subaction_bindings {
+                    SubactionCollection::Singleton(bindings) => {
+                        debug_assert!(states.subaction_states.is_none());
+
+                        states
+                            .main_state
+                            .sync_from_god_states(
+                                bindings.iter().map(|a| a.read().unwrap().action_state),
+                            )
+                            .unwrap();
+                    }
+                    SubactionCollection::Subactions(bindings_map) => {
+                        let subaction_states = states.subaction_states.as_mut().unwrap();
+                        debug_assert_eq!(bindings_map.len(), subaction_states.len());
+
+                        for (states, bindings) in subaction_states.iter_mut().map(|(subaction_path, states)| {
+                            (states, bindings_map.get(subaction_path).unwrap())
+                        }) {
+                            states
+                            .sync_from_god_states(
+                                bindings.iter().map(|a| a.read().unwrap().action_state),
+                            )
+                            .unwrap();
+                        }
                     }
                 },
-                SubactionCollection::Subactions(map) => {
-                    if let SubactionCollection::Subactions(bindings_map) = subaction_bindings {
-
-                    } else {
-                        panic!()
+                CachedActionStatesEnum::Float(states) => match subaction_bindings {
+                    SubactionCollection::Singleton(_) => assert!(states.subaction_states.is_none()),
+                    SubactionCollection::Subactions(_) => {
+                        assert!(states.subaction_states.is_some())
+                    }
+                },
+                CachedActionStatesEnum::Vector2f(states) => match subaction_bindings {
+                    SubactionCollection::Singleton(_) => assert!(states.subaction_states.is_none()),
+                    SubactionCollection::Subactions(_) => {
+                        assert!(states.subaction_states.is_some())
+                    }
+                },
+                CachedActionStatesEnum::Pose(states) => match subaction_bindings {
+                    SubactionCollection::Singleton(_) => assert!(states.subaction_states.is_none()),
+                    SubactionCollection::Subactions(_) => {
+                        assert!(states.subaction_states.is_some())
                     }
                 },
             }
@@ -250,60 +272,177 @@ pub unsafe extern "system" fn get_action_state_boolean(
         None => return xr::Result::ERROR_HANDLE_INVALID,
     };
 
-    let action_cached_states = match session
+    let cas_enum = match session
         .cached_action_states
         .get()
         .unwrap()
         .get(&get_info.action)
     {
-        Some(states) => states,
+        Some(cas_enum) => cas_enum,
         None => return xr::Result::ERROR_ACTIONSET_NOT_ATTACHED,
     }
     .read()
     .unwrap();
 
-    let matching_cached_states = match action_cached_states.get_matching(get_info.subaction_path) {
-        Ok(cached_states) => cached_states,
-        Err(result) => return result,
-    };
-
-    let state = match crate::god_actions::flatten_states_for_type(ActionType::BooleanInput, matching_cached_states.iter().map(|f| *f)) {
-        Ok(state) => if let ActionState::Boolean(state_bool) = state {
-            state_bool
-        } else {
-            panic!()
-        },
-        Err(result) => return result,
-    };
-    out_state.current_state = state.current_state;
-    out_state.is_active = state.is_active;
-    out_state.last_change_time = state.last_change_time;
-
-    xr::Result::SUCCESS
+    match &cas_enum as &god_actions::CachedActionStatesEnum {
+        god_actions::CachedActionStatesEnum::Boolean(cached_action_states) => {
+            match cached_action_states.get_state(get_info.subaction_path) {
+                Ok(cached_state) => {
+                    out_state.current_state = cached_state.current_state.into();
+                    out_state.last_change_time = cached_state.last_change_time.into();
+                    out_state.changed_since_last_sync = cached_state.changed_since_last_sync.into();
+                    out_state.is_active = cached_state.is_active.into();
+                    xr::Result::SUCCESS
+                }
+                Err(result) => return result,
+            }
+        }
+        _ => return xr::Result::ERROR_ACTION_TYPE_MISMATCH,
+    }
 }
 
 pub unsafe extern "system" fn get_action_state_float(
     session: xr::Session,
     get_info: *const xr::ActionStateGetInfo,
-    state: *mut xr::ActionStateFloat,
+    out_state: *mut xr::ActionStateFloat,
 ) -> xr::Result {
-    xr::Result::SUCCESS
+    let get_info = &*get_info;
+    let out_state = &mut *out_state;
+
+    if let Err(result) = get_info.validate() {
+        return result;
+    };
+    if let Err(result) = out_state.validate() {
+        return result;
+    };
+
+    let session = match session.get_wrapper() {
+        Some(session) => session,
+        None => return xr::Result::ERROR_HANDLE_INVALID,
+    };
+
+    let cas_enum = match session
+        .cached_action_states
+        .get()
+        .unwrap()
+        .get(&get_info.action)
+    {
+        Some(cas_enum) => cas_enum,
+        None => return xr::Result::ERROR_ACTIONSET_NOT_ATTACHED,
+    }
+    .read()
+    .unwrap();
+
+    match &cas_enum as &god_actions::CachedActionStatesEnum {
+        god_actions::CachedActionStatesEnum::Float(cached_action_states) => {
+            match cached_action_states.get_state(get_info.subaction_path) {
+                Ok(cached_state) => {
+                    out_state.current_state = cached_state.current_state;
+                    out_state.last_change_time = cached_state.last_change_time.into();
+                    out_state.changed_since_last_sync = cached_state.changed_since_last_sync.into();
+                    out_state.is_active = cached_state.is_active.into();
+                    xr::Result::SUCCESS
+                }
+                Err(result) => return result,
+            }
+        }
+        _ => return xr::Result::ERROR_ACTION_TYPE_MISMATCH,
+    }
 }
 
 pub unsafe extern "system" fn get_action_state_vector2f(
     session: xr::Session,
     get_info: *const xr::ActionStateGetInfo,
-    state: *mut xr::ActionStateVector2f,
+    out_state: *mut xr::ActionStateVector2f,
 ) -> xr::Result {
-    xr::Result::SUCCESS
+    let get_info = &*get_info;
+    let out_state = &mut *out_state;
+
+    if let Err(result) = get_info.validate() {
+        return result;
+    };
+    if let Err(result) = out_state.validate() {
+        return result;
+    };
+
+    let session = match session.get_wrapper() {
+        Some(session) => session,
+        None => return xr::Result::ERROR_HANDLE_INVALID,
+    };
+
+    let cas_enum = match session
+        .cached_action_states
+        .get()
+        .unwrap()
+        .get(&get_info.action)
+    {
+        Some(cas_enum) => cas_enum,
+        None => return xr::Result::ERROR_ACTIONSET_NOT_ATTACHED,
+    }
+    .read()
+    .unwrap();
+
+    match &cas_enum as &god_actions::CachedActionStatesEnum {
+        god_actions::CachedActionStatesEnum::Vector2f(cached_action_states) => {
+            match cached_action_states.get_state(get_info.subaction_path) {
+                Ok(cached_state) => {
+                    out_state.current_state = cached_state.current_state;
+                    out_state.last_change_time = cached_state.last_change_time.into();
+                    out_state.changed_since_last_sync = cached_state.changed_since_last_sync.into();
+                    out_state.is_active = cached_state.is_active.into();
+                    xr::Result::SUCCESS
+                }
+                Err(result) => return result,
+            }
+        }
+        _ => return xr::Result::ERROR_ACTION_TYPE_MISMATCH,
+    }
 }
 
 pub unsafe extern "system" fn get_action_state_pose(
     session: xr::Session,
     get_info: *const xr::ActionStateGetInfo,
-    state: *mut xr::ActionStatePose,
+    out_state: *mut xr::ActionStatePose,
 ) -> xr::Result {
-    xr::Result::SUCCESS
+    let get_info = &*get_info;
+    let out_state = &mut *out_state;
+
+    if let Err(result) = get_info.validate() {
+        return result;
+    };
+    if let Err(result) = out_state.validate() {
+        return result;
+    };
+
+    let session = match session.get_wrapper() {
+        Some(session) => session,
+        None => return xr::Result::ERROR_HANDLE_INVALID,
+    };
+
+    let cas_enum = match session
+        .cached_action_states
+        .get()
+        .unwrap()
+        .get(&get_info.action)
+    {
+        Some(cas_enum) => cas_enum,
+        None => return xr::Result::ERROR_ACTIONSET_NOT_ATTACHED,
+    }
+    .read()
+    .unwrap();
+
+    match &cas_enum as &god_actions::CachedActionStatesEnum {
+        god_actions::CachedActionStatesEnum::Pose(cached_action_states) => {
+            match cached_action_states.get_state(get_info.subaction_path) {
+                Ok(cached_state) => {
+                    out_state.is_active = cached_state.is_active.into();
+                    xr::Result::SUCCESS
+                }
+                Err(result) => return result,
+            }
+        }
+        _ => return xr::Result::ERROR_ACTION_TYPE_MISMATCH,
+    }
 }
 
 fn update_application_actions(instance: &InstanceWrapper, action_set_handles: &[xr::ActionSet]) {
