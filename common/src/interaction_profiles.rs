@@ -126,6 +126,7 @@ fn test() {
 
 pub fn generate() -> Root {
     //TODO replace with better approach
+    //TODO deal with system components sometimes not existing
 
     //JSON license:
     //Copyright 2020-2021, Collabora, Ltd.

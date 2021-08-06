@@ -4,7 +4,7 @@ use std::ptr;
 use std::sync::RwLock;
 
 use crate::god_actions::{
-    self, CachedActionStatesEnum, GodActionStateEnum, OxideActionState, SubactionCollection,
+    self, CachedActionStatesEnum, SubactionCollection,
 };
 use crate::validation::Validate;
 use crate::wrappers::*;
@@ -14,8 +14,7 @@ use common::serial::write_json;
 use common::serial::CONFIG_DIR;
 use common::xrapplication_info::*;
 
-use openxr::sys::{self as xr, Bool32};
-use openxr::ActionInput;
+use openxr::sys as xr;
 
 pub unsafe extern "system" fn attach_session_action_sets(
     session: xr::Session,
@@ -191,6 +190,7 @@ pub unsafe extern "system" fn sync_actions(
             Some(actions) => actions,
             None => return xr::Result::ERROR_ACTIONSET_NOT_ATTACHED,
         };
+        assert_eq!(active_action_set.subaction_path, xr::Path::NULL);
         for (action_handle, subaction_bindings) in actions {
             let mut action_cache_states = session
                 .cached_action_states
@@ -200,51 +200,12 @@ pub unsafe extern "system" fn sync_actions(
                 .unwrap()
                 .write()
                 .unwrap();
+
             match &mut action_cache_states as &mut CachedActionStatesEnum {
-                CachedActionStatesEnum::Boolean(states) => match subaction_bindings {
-                    SubactionCollection::Singleton(bindings) => {
-                        debug_assert!(states.subaction_states.is_none());
-
-                        states
-                            .main_state
-                            .sync_from_god_states(
-                                bindings.iter().map(|a| a.read().unwrap().action_state),
-                            )
-                            .unwrap();
-                    }
-                    SubactionCollection::Subactions(bindings_map) => {
-                        let subaction_states = states.subaction_states.as_mut().unwrap();
-                        debug_assert_eq!(bindings_map.len(), subaction_states.len());
-
-                        for (states, bindings) in subaction_states.iter_mut().map(|(subaction_path, states)| {
-                            (states, bindings_map.get(subaction_path).unwrap())
-                        }) {
-                            states
-                            .sync_from_god_states(
-                                bindings.iter().map(|a| a.read().unwrap().action_state),
-                            )
-                            .unwrap();
-                        }
-                    }
-                },
-                CachedActionStatesEnum::Float(states) => match subaction_bindings {
-                    SubactionCollection::Singleton(_) => assert!(states.subaction_states.is_none()),
-                    SubactionCollection::Subactions(_) => {
-                        assert!(states.subaction_states.is_some())
-                    }
-                },
-                CachedActionStatesEnum::Vector2f(states) => match subaction_bindings {
-                    SubactionCollection::Singleton(_) => assert!(states.subaction_states.is_none()),
-                    SubactionCollection::Subactions(_) => {
-                        assert!(states.subaction_states.is_some())
-                    }
-                },
-                CachedActionStatesEnum::Pose(states) => match subaction_bindings {
-                    SubactionCollection::Singleton(_) => assert!(states.subaction_states.is_none()),
-                    SubactionCollection::Subactions(_) => {
-                        assert!(states.subaction_states.is_some())
-                    }
-                },
+                CachedActionStatesEnum::Boolean(states) => states.update_from_bindings(subaction_bindings),
+                CachedActionStatesEnum::Float(states) => states.update_from_bindings(subaction_bindings),
+                CachedActionStatesEnum::Vector2f(states) => states.update_from_bindings(subaction_bindings),
+                CachedActionStatesEnum::Pose(states) => states.update_from_bindings(subaction_bindings),
             }
         }
     }
@@ -443,6 +404,28 @@ pub unsafe extern "system" fn get_action_state_pose(
         }
         _ => return xr::Result::ERROR_ACTION_TYPE_MISMATCH,
     }
+}
+
+pub unsafe extern "system" fn create_action_space(
+    session: xr::Session,
+    create_info: *const xr::ActionSpaceCreateInfo,
+    space: *mut xr::Space,
+) -> xr::Result {
+    let session = match session.get_wrapper() {
+        Some(session) => session,
+        None => return xr::Result::ERROR_HANDLE_INVALID,
+    };
+
+
+}
+
+pub unsafe extern "system" fn locate_space(
+    space: xr::Space,
+    base_space: xr::Space,
+    time: xr::Time,
+    location: *mut xr::SpaceLocation,
+) -> xr::Result {
+
 }
 
 fn update_application_actions(instance: &InstanceWrapper, action_set_handles: &[xr::ActionSet]) {

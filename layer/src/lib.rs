@@ -16,7 +16,9 @@ use std::os::raw::c_char;
 use std::ffi::CStr;
 use std::sync::Arc;
 use std::sync::RwLock;
-
+//xrNegotiateLoaderApiLayerInterfaceVersion
+//xrEnumerateApiLayerProperties
+//xrEnumerateInstanceExtensionProperties
 #[no_mangle]
 pub unsafe extern "system" fn xrNegotiateLoaderApiLayerInterface(
     _: *const XrNegotiateLoaderInfo, 
@@ -46,7 +48,7 @@ unsafe extern "system" fn create_api_layer_instance(
 
     assert_eq!(LAYER_NAME, CStr::from_ptr(std::mem::transmute(next_info.layer_name.as_ptr())).to_str().unwrap());
 
-    //Get the GetInstanceProcAddr func of the layer bellow us
+    //Get the xrGetInstanceProcAddr func of the layer bellow us
     let get_instance_proc_addr_next: pfn::GetInstanceProcAddr = next_info.next_get_instance_proc_addr; 
 
     //Initialize the layer bellow us
@@ -78,7 +80,7 @@ unsafe extern "system" fn create_api_layer_instance(
     // .into_iter()
     // .map(|ptr| {
     //     let mut extension_name = [0; xr::MAX_EXTENSION_NAME_SIZE];
-    //     place_cstr(&mut extension_name, &CStr::from_ptr(*ptr).to_string_lossy());
+    //     util::place_cstr(&mut extension_name, &CStr::from_ptr(*ptr).to_string_lossy());
     //     xr::ExtensionProperties {
     //         ty: xr::ExtensionProperties::TYPE,
     //         next: std::ptr::null_mut(),
@@ -88,7 +90,7 @@ unsafe extern "system" fn create_api_layer_instance(
     // })
     // .collect::<Vec<_>>();
 
-    // let exts = match openxr::InstanceExtensions::load(&entry, *instance, &openxr::ExtensionSet::) {
+    // let exts = match openxr::InstanceExtensions::load(&entry, *instance, &openxr::ExtensionSet::from_properties(&enabled_ext)) {
     //     Ok(caller) => caller,
     //     Err(result) => return result,
     // };
@@ -120,6 +122,7 @@ unsafe extern "system" fn create_api_layer_instance(
             wrapper.god_action_sets = god_action_sets;
         },
         Err(result) => {
+            println!("failed to create god action sets");
             wrapper.destroy_instance();
             *instance = xr::Instance::NULL;
             return result;      
@@ -165,6 +168,8 @@ unsafe extern "system" fn instance_proc_addr(instance: xr::Instance, name: *cons
             "xrGetActionStateVector2f" => std::mem::transmute(injections::session::get_action_state_vector2f as pfn::GetActionStateVector2f),
             "xrGetActionStatePose" => std::mem::transmute(injections::session::get_action_state_pose as pfn::GetActionStatePose),
 
+            "xrCreateActionSpace" => std::mem::transmute(injections::session::create_action_space as pfn::CreateActionSpace),
+            "xrLocateSpace" => std::mem::transmute(injections::session::locate_space as pfn::LocateSpace),
             _ => (*function).unwrap()
         }
     );

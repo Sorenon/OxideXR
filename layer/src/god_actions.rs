@@ -13,6 +13,8 @@ use std::cmp;
 use std::collections::HashMap;
 use std::ops::Add;
 use std::ptr;
+use std::sync::Arc;
+use std::sync::RwLock;
 
 use crate::wrappers::InstanceWrapper;
 use crate::wrappers::SessionWrapper;
@@ -294,6 +296,42 @@ impl<T: OxideActionState> CachedActionStates<T> {
             }
         }
     }
+
+    pub fn update_from_bindings(&mut self, subaction_bindings: &SubactionCollection<Vec<Arc<RwLock<GodState>>>>) {
+        match subaction_bindings {
+            SubactionCollection::Singleton(bindings) => {
+                debug_assert!(self.subaction_states.is_none());
+
+                self
+                    .main_state
+                    .sync_from_god_states(
+                        bindings.iter().map(|a| a.read().unwrap().action_state),
+                    )
+                    .unwrap();
+            }
+            SubactionCollection::Subactions(bindings_map) => {
+                let subaction_states = self.subaction_states.as_mut().unwrap();
+                debug_assert!(bindings_map.len() <= subaction_states.len());
+
+                for (states, bindings) in subaction_states.iter_mut().filter_map(|(subaction_path, states)| {
+                    bindings_map.get(subaction_path).map(|bindings| { (states, bindings) })
+                }) {
+                    states
+                    .sync_from_god_states(
+                        bindings.iter().map(|a| a.read().unwrap().action_state),
+                    )
+                    .unwrap();
+                }
+
+                self
+                .main_state
+                .sync_from_god_states(
+                    bindings_map.values().flatten().map(|a| a.read().unwrap().action_state),
+                )
+                .unwrap();
+            }
+        }
+    }
 }
 
 impl GodActionStateEnum {
@@ -542,7 +580,7 @@ impl OxideActionState for openxr::ActionState<f32> {
         for iter_state in states.filter(|e| e.get_inner().is_active()) {
             let iter_state = iter_state.get_inner();
             self.is_active = true;
-            if iter_state.get_scalar()?.abs() > new_state.abs() {
+            if iter_state.get_scalar()?.abs() >= new_state.abs() {
                 new_state = iter_state.get_scalar()?;
                 new_last_change_time = iter_state.last_change_time()?;
             }
@@ -553,7 +591,8 @@ impl OxideActionState for openxr::ActionState<f32> {
             self.last_change_time = xr::Time::from_nanos(0);
         } else {
             if self.current_state != new_state {
-                debug_assert!(new_last_change_time.as_nanos() > self.last_change_time.as_nanos()); //No time travel please
+                //This can crash TODO estimate last_change_time when time travel occurs
+                debug_assert!(new_last_change_time.as_nanos() > self.last_change_time.as_nanos(), "{} < {}", new_last_change_time.as_nanos(), self.last_change_time.as_nanos()); //No time travel please
                 self.current_state = new_state;
                 self.last_change_time = new_last_change_time;
                 self.changed_since_last_sync = true;

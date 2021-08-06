@@ -33,6 +33,15 @@ pub unsafe fn static_init() {
     }
 }
 
+#[allow(invalid_value)]
+unsafe fn _assert_thread_safe() {
+    type T = dyn Send + Sync;
+    let _: &T = &std::mem::zeroed::<InstanceWrapper>();
+    let _: &T = &std::mem::zeroed::<SessionWrapper>();
+    let _: &T = &std::mem::zeroed::<ActionSetWrapper>();
+    let _: &T = &std::mem::zeroed::<ActionWrapper>();
+}
+
 pub fn instances() -> &'static HandleMap<xr::Instance, InstanceWrapper> {
     INSTANCES.get().unwrap()
 }
@@ -279,6 +288,8 @@ impl SessionWrapper {
                     binding: *path,
                 }
             }).collect::<Vec<_>>();
+
+            println!("{}", bindings.len());
     
             let suggested_bindings = xr::InteractionProfileSuggestedBinding {
                 ty: xr::InteractionProfileSuggestedBinding::TYPE,
@@ -288,9 +299,13 @@ impl SessionWrapper {
                 suggested_bindings: bindings.as_ptr(),
             };
 
+            //TODO deal with some system components not existing causing XR_ERROR_PATH_UNSUPPORTED
             let result = instance.suggest_interaction_profile_bindings(&suggested_bindings);
             if result.into_raw() < 0 {
-                return Err(result);
+                println!("failed to load profile: {} because '{}'", instance.path_to_string(*profile_name).unwrap(), result);
+                // return Err(result);
+            } else {
+                println!("loaded profile: {}", instance.path_to_string(*profile_name).unwrap());
             }
         }
 
@@ -310,6 +325,7 @@ impl SessionWrapper {
         let result = wrapper.attach_session_action_sets(&attach_info);
 
         if result.into_raw() < 0 {
+            println!("attach_session_action_sets {}", result);
             return Err(result);
         }
         
