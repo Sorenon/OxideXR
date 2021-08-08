@@ -5,7 +5,7 @@ use std::path::Path;
 use std::ptr;
 use std::sync::{Arc, RwLock, Weak};
 
-use crate::god_actions::{self, CachedActionStatesEnum, SubactionCollection};
+use crate::god_actions::{self, CachedActionStatesEnum, SubactionBindings};
 use crate::validation::Validate;
 use crate::wrappers::*;
 use common::serial::get_uuid;
@@ -14,7 +14,7 @@ use common::serial::write_json;
 use common::serial::CONFIG_DIR;
 use common::xrapplication_info::*;
 
-use openxr::sys as xr;
+use openxr::{sys as xr, Result};
 
 pub unsafe extern "system" fn attach_session_action_sets(
     session: xr::Session,
@@ -34,6 +34,7 @@ pub unsafe extern "system" fn attach_session_action_sets(
 
     let mut attached_action_sets = HashMap::new();
     let mut cached_action_states = HashMap::new();
+    let mut output_bindings = HashMap::new();
 
     for action_set in action_sets {
         let action_set = match action_set.get_wrapper() {
@@ -60,47 +61,21 @@ pub unsafe extern "system" fn attach_session_action_sets(
             );
 
             if ActionType::from_raw(action.action_type).is_input() {
-                let subaction_paths = &action.subaction_paths;
-                // println!("{}, {:?}", action.localized_name, subaction_paths);
-                if subaction_paths.is_empty() {
-                    let mut vec = Vec::new();
-
-                    for (profile, bindings) in action.bindings.read().unwrap().iter() {
-                        let god_states = session.god_states.get(profile).unwrap();
-                        for binding in bindings {
-                            let god_state = god_states.get(binding).unwrap();
-                            vec.push(god_state.clone());
-                        }
-                    }
-
-                    attached_actions.insert(action.handle, SubactionCollection::Singleton(vec));
-                } else {
-                    let mut map = subaction_paths
-                        .iter()
-                        .map(|subaction_path| (*subaction_path, Vec::new()))
-                        .collect::<HashMap<_, _>>();
-
-                    for (profile, bindings) in action.bindings.read().unwrap().iter() {
-                        let god_states = session.god_states.get(profile).unwrap();
-                        for binding in bindings {
-                            let god_state = god_states.get(binding).unwrap();
-                            let binding_str = instance.path_to_string(*binding).unwrap();
-                            let subaction_path = subaction_paths
-                                .iter()
-                                .filter(|subaction_path| {
-                                    binding_str.starts_with(
-                                        &instance.path_to_string(**subaction_path).unwrap(),
-                                    )
-                                })
-                                .next()
-                                .unwrap();
-                            let vec = map.get_mut(subaction_path).unwrap();
-                            vec.push(god_state.clone());
-                        }
-                    }
-
-                    attached_actions.insert(action.handle, SubactionCollection::Subactions(map));
-                }
+                attached_actions.insert(
+                    action.handle,
+                    RwLock::new(SubactionBindings::new(
+                        &instance,
+                        &action,
+                        &session.god_states,
+                    )),
+                );
+                cached_action_states.insert(
+                    action.handle,
+                    RwLock::new(CachedActionStatesEnum::new(
+                        ActionType::from_raw(action.action_type),
+                        &action.subaction_paths,
+                    )),
+                );
 
                 for (profile_name, bindings) in action.bindings.read().unwrap().iter() {
                     println!(" {}", instance.path_to_string(*profile_name).unwrap());
@@ -109,12 +84,13 @@ pub unsafe extern "system" fn attach_session_action_sets(
                         println!("  {}", &states.get(&binding).unwrap().name);
                     }
                 }
-
-                cached_action_states.insert(
+            } else {
+                output_bindings.insert(
                     action.handle,
-                    RwLock::new(CachedActionStatesEnum::new(
-                        ActionType::from_raw(action.action_type),
-                        &subaction_paths,
+                    RwLock::new(SubactionBindings::new(
+                        &instance,
+                        &action,
+                        &session.god_outputs,
                     )),
                 );
             }
@@ -126,6 +102,9 @@ pub unsafe extern "system" fn attach_session_action_sets(
         return xr::Result::ERROR_ACTIONSETS_ALREADY_ATTACHED;
     }
     if let Err(_) = session.cached_action_states.set(cached_action_states) {
+        return xr::Result::ERROR_ACTIONSETS_ALREADY_ATTACHED;
+    }
+    if let Err(_) = session.output_bindings.set(output_bindings) {
         return xr::Result::ERROR_ACTIONSETS_ALREADY_ATTACHED;
     }
 
@@ -154,13 +133,12 @@ pub unsafe extern "system" fn sync_actions(
             })
             .collect::<Vec<_>>();
 
-        let my_sync_info = xr::ActionsSyncInfo {
+        session.sync_actions(&xr::ActionsSyncInfo {
             ty: xr::ActionsSyncInfo::TYPE,
             next: ptr::null(),
             count_active_action_sets: god_sets.len() as u32,
             active_action_sets: god_sets.as_ptr(),
-        };
-        session.sync_actions(&my_sync_info)
+        })
     };
     if result.into_raw() < 0 {
         return result;
@@ -172,9 +150,17 @@ pub unsafe extern "system" fn sync_actions(
         .map(|map| map.values())
         .flatten()
     {
-        //TODO only update the needed god states
-        god_state.sync(&session).unwrap();
+        //Check if the state has more than one reference since states with only one reference are not being used
+        if Arc::strong_count(god_state) > 1 {
+            god_state.sync(&session).unwrap();
+        }
     }
+
+    let sync_idx = {
+        let mut sync_idx = session.sync_idx.write().unwrap();
+        *sync_idx += 1;
+        *sync_idx
+    };
 
     let active_action_sets = std::slice::from_raw_parts(
         (*app_sync_info).active_action_sets,
@@ -182,12 +168,6 @@ pub unsafe extern "system" fn sync_actions(
     );
     let attached_actions = session.attached_action_sets.get().unwrap();
     let cached_action_states = session.cached_action_states.get().unwrap();
-    let sync_idx = {
-        let mut lock = session.sync_idx.write().unwrap();
-        let idx = *lock + 1;
-        *lock = idx;
-        idx
-    };
     for active_action_set in active_action_sets {
         if active_action_set.action_set.get_wrapper().is_none() {
             return xr::Result::ERROR_HANDLE_INVALID;
@@ -204,7 +184,9 @@ pub unsafe extern "system" fn sync_actions(
                 .write()
                 .unwrap();
 
-            if let Err(result) = action_cache_states.sync(subaction_bindings) {
+            let subaction_bindings = subaction_bindings.read().unwrap();
+
+            if let Err(result) = action_cache_states.sync(&subaction_bindings) {
                 return result;
             }
 
@@ -212,7 +194,7 @@ pub unsafe extern "system" fn sync_actions(
                 if let Some(action_spaces) = session.action_spaces.get_mut(action_handle) {
                     for action_space in action_spaces.iter() {
                         if let Err(result) =
-                            action_space.sync(&session, sync_idx, subaction_bindings)
+                            action_space.sync(&session, sync_idx, &subaction_bindings)
                         {
                             return result;
                         }
@@ -485,6 +467,75 @@ pub unsafe extern "system" fn locate_views(
         view_count_output,
         views,
     )
+}
+
+pub unsafe extern "system" fn apply_haptic_feedback(
+    session: xr::Session,
+    haptic_action_info: *const xr::HapticActionInfo,
+    haptic_feedback: *const xr::HapticBaseHeader,
+) -> xr::Result {
+    match for_each_output_binding(
+        session,
+        &*haptic_action_info,
+        |session, info| -> Result<xr::Result> {
+            session.apply_haptic_feedback(&info, haptic_feedback)
+        },
+    ) {
+        Ok(result) => result,
+        Err(result) => result,
+    }
+}
+
+pub unsafe extern "system" fn stop_haptic_feedback(
+    session: xr::Session,
+    haptic_action_info: *const xr::HapticActionInfo,
+) -> xr::Result {
+    match for_each_output_binding(
+        session,
+        &*haptic_action_info,
+        |session, info| -> Result<xr::Result> {
+            session.stop_haptic_feedback(&info)
+        },
+    ) {
+        Ok(result) => result,
+        Err(result) => result,
+    }
+}
+
+fn for_each_output_binding<F>(
+    session: xr::Session,
+    haptic_action_info: &xr::HapticActionInfo,
+    callback: F,
+) -> Result<xr::Result>
+where
+    F: Fn(&SessionWrapper, xr::HapticActionInfo) -> Result<xr::Result>,
+{
+    let session = session.try_get_wrapper()?;
+    let action = haptic_action_info.action.try_get_wrapper()?;
+
+    let subaction_bindings = session
+        .output_bindings
+        .get()
+        .unwrap()
+        .get(&action.handle)
+        .map_or(Err(xr::Result::ERROR_ACTIONSET_NOT_ATTACHED), |s| Ok(s))?
+        .read()
+        .unwrap();
+
+    for binding in subaction_bindings
+        .get_matching(haptic_action_info.subaction_path)
+        .unwrap()
+        .iter()
+        .map(|v| v.iter())
+        .flatten()
+    {
+        let mut my_haptic_action_info = *haptic_action_info;
+        my_haptic_action_info.action = binding.action.handle;
+
+        callback(&session, my_haptic_action_info)?;
+    }
+
+    Ok(xr::Result::SUCCESS)
 }
 
 fn update_application_actions(instance: &InstanceWrapper, action_set_handles: &[xr::ActionSet]) {

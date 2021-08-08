@@ -1,4 +1,5 @@
 pub mod space;
+pub mod session;
 
 use dashmap::DashMap;
 use once_cell::sync::OnceCell;
@@ -16,11 +17,14 @@ use std::sync::Arc;
 
 use crate::god_actions;
 use crate::god_actions::CachedActionStatesEnum;
+use crate::god_actions::GodAction;
+use crate::god_actions::GodOutput;
 use crate::god_actions::GodState;
-use crate::god_actions::SubactionCollection;
+use crate::god_actions::SubactionBindings;
 use crate::util;
 
 pub use self::space::*;
+pub use self::session::*;
 
 type HandleMap<H, T> = DashMap<H, Arc<T>>;
 type HandleRef<'a, H, T> = dashmap::mapref::one::Ref<'a, H, Arc<T>>;
@@ -34,10 +38,10 @@ static SPACES:      OnceCell<HandleMap<xr::Space, SpaceWrapper>> = OnceCell::new
 pub unsafe fn static_init() {
     if INSTANCES.get().is_none() {
         #[cfg(feature = "vscode_dbg")]
-        if let Some(vscode) = option_env!("VS_CODE") {
+        if let Some(vscode) = option_env!("VSCODE_GIT_ASKPASS_NODE") {
             let url = format!("vscode://vadimcn.vscode-lldb/launch/config?{{'request':'attach','pid':{}}}", std::process::id());
             std::process::Command::new(vscode).arg("--open-url").arg(url).output().unwrap();
-            std::thread::sleep(std::time::Duration::from_millis(1000)); // Wait for debugger to attach
+            std::thread::sleep(std::time::Duration::from_millis(2000)); // Wait for debugger to attach
         }
 
         INSTANCES.set(DashMap::new()).unwrap();
@@ -93,27 +97,6 @@ pub struct InstanceWrapper {
     pub core: openxr::raw::Instance,
 
     pub get_instance_proc_addr_next: pfn::GetInstanceProcAddr,
-}
-
-// #[derive(Debug)]
-pub struct SessionWrapper {
-    pub handle: xr::Session,
-    pub instance: Weak<InstanceWrapper>,
-    pub spaces: RwLock<Vec<Arc<SpaceWrapper>>>,
-
-    //The cached state of every input path (updated every sync call)
-    pub god_states: HashMap<xr::Path/* interactionProfile */, HashMap<xr::Path /* binding */, Arc<GodState>>>,
-
-    //The bindings for each attached input action
-    pub attached_action_sets: OnceCell<HashMap<xr::ActionSet, HashMap<xr::Action, RwLock<SubactionCollection<Vec<Arc<GodState>>>>>>>,
-
-    //The cached state of the attached application actions (updated every sync call)
-    pub cached_action_states: OnceCell<HashMap<xr::Action, RwLock<CachedActionStatesEnum>>>,
-
-    //nb: For some unholy reason the OpenXR spec allows action spaces to be created for actions which have not been attached to the session 
-    pub action_spaces: DashMap<xr::Action, Vec<Arc<ActionSpace>>>,
-
-    pub sync_idx: RwLock<u64>, 
 }
 
 #[derive(Debug)]
@@ -277,182 +260,6 @@ impl InstanceWrapper {
 
     pub fn from_handle_panic<'a>(handle: xr::Instance) -> HandleRef<'a, xr::Instance, InstanceWrapper> {
         INSTANCES.get().unwrap().get(&handle).unwrap()
-    }
-}
-
-impl SessionWrapper {
-    pub fn new(handle: xr::Session, instance: &Arc<InstanceWrapper>) -> Result<Self> {
-        let mut wrapper = Self {
-            handle,
-            instance: Arc::downgrade(instance),
-            spaces: Default::default(),
-            attached_action_sets: Default::default(),
-            cached_action_states: Default::default(),
-            god_states: Default::default(),
-            action_spaces: DashMap::new(),
-            sync_idx: RwLock::new(0),
-        };
-    
-        for (profile_name, god_action_set) in &instance.god_action_sets {
-            let states = match wrapper.god_states.get_mut(profile_name) {
-                Some(states) => states,
-                None => {
-                    wrapper.god_states.insert(*profile_name, HashMap::new());
-                    wrapper.god_states.get_mut(profile_name).unwrap()
-                },
-            };
-    
-            for god_action in god_action_set.god_actions.values() {
-                if god_action.action_type.is_input() {
-                    for subaction_path in &god_action.subaction_paths {
-                        let name = instance.path_to_string(*subaction_path)?.add(&god_action.name);
-                        println!("{}", &name);
-    
-                        states.insert(
-                            instance.string_to_path(&name)?,
-                            Arc::new(god_actions::GodState {
-                                action: god_action.clone(),
-                                name,
-                                subaction_path: *subaction_path,
-                                action_state: RwLock::new(god_actions::GodActionStateEnum::new(god_action.action_type).unwrap()),
-                            }),
-                        );
-                    }
-                }
-            }
-    
-            let bindings = states.iter().map(|(path, god_state)| {
-                xr::ActionSuggestedBinding {
-                    action: god_state.action.handle,
-                    binding: *path,
-                }
-            }).collect::<Vec<_>>();
-
-            println!("{}", bindings.len());
-    
-            let suggested_bindings = xr::InteractionProfileSuggestedBinding {
-                ty: xr::InteractionProfileSuggestedBinding::TYPE,
-               next: ptr::null(),
-                interaction_profile: *profile_name,
-                count_suggested_bindings: bindings.len() as u32,
-                suggested_bindings: bindings.as_ptr(),
-            };
-
-            //TODO deal with some system components not existing causing XR_ERROR_PATH_UNSUPPORTED
-            let result = instance.suggest_interaction_profile_bindings(&suggested_bindings);
-            if result.into_raw() < 0 {
-                println!("failed to load profile: {} because '{}'", instance.path_to_string(*profile_name).unwrap(), result);
-                // return Err(result);
-            } else {
-                println!("loaded profile: {}", instance.path_to_string(*profile_name).unwrap());
-            }
-        }
-
-        let god_action_sets = instance
-            .god_action_sets
-            .values()
-            .map(|container| container.handle)
-            .collect::<Vec<_>>();
-
-        let attach_info = xr::SessionActionSetsAttachInfo {
-            ty: xr::SessionActionSetsAttachInfo::TYPE,
-            next: ptr::null(),
-            count_action_sets: god_action_sets.len() as u32,
-            action_sets: god_action_sets.as_ptr(),
-        };
-
-        let result = wrapper.attach_session_action_sets(&attach_info);
-
-        if result.into_raw() < 0 {
-            println!("attach_session_action_sets {}", result);
-            return Err(result);
-        }
-        
-        Ok(wrapper)
-    }
-
-    #[inline]
-    pub fn attach_session_action_sets(
-        &self,
-        attach_info: *const xr::SessionActionSetsAttachInfo,
-    ) -> xr::Result {
-        unsafe {
-            (self.instance().core.attach_session_action_sets)(self.handle, attach_info)
-        }
-    }
-
-    #[inline]
-    pub fn instance(&self) -> Arc<InstanceWrapper> {
-        self.instance.upgrade().unwrap().clone()
-    }
-
-    #[inline]
-    pub fn sync_actions(
-        &self,
-        sync_info: *const xr::ActionsSyncInfo,
-    ) -> xr::Result {
-        unsafe {
-            (self.instance().core.sync_actions)(self.handle, sync_info)
-        }
-    }
-
-    #[inline]
-    pub fn get_action_state_boolean(
-        &self,
-        get_info: *const xr::ActionStateGetInfo,
-        state: *mut xr::ActionStateBoolean,
-    ) -> xr::Result {
-        unsafe {
-            (self.instance().core.get_action_state_boolean)(self.handle, get_info, state)
-        }
-    }
-
-    #[inline]
-    pub fn get_action_state_float(
-        &self,
-        get_info: *const xr::ActionStateGetInfo,
-        state: *mut xr::ActionStateFloat,
-    ) -> xr::Result {
-        unsafe {
-            (self.instance().core.get_action_state_float)(self.handle, get_info, state)
-        }
-    }
-
-    #[inline]
-    pub fn get_action_state_vector2f(
-        &self,
-        get_info: *const xr::ActionStateGetInfo,
-        state: *mut xr::ActionStateVector2f,
-    ) -> xr::Result {
-        unsafe {
-            (self.instance().core.get_action_state_vector2f)(self.handle, get_info, state)
-        }
-    }
-
-    #[inline]
-    pub fn get_action_state_pose(
-        &self,
-        get_info: *const xr::ActionStateGetInfo,
-        state: *mut xr::ActionStatePose,
-    ) -> xr::Result {
-        unsafe {
-            (self.instance().core.get_action_state_pose)(self.handle, get_info, state)
-        }
-    }
-
-    #[inline]
-    pub fn create_action_space(
-        &self,
-        create_info: *const xr::ActionSpaceCreateInfo
-    ) -> Result<xr::Space> {
-        let mut space = xr::Space::NULL;
-        util::check2(unsafe {
-            (self.instance().core.create_action_space)(self.handle, create_info, &mut space)
-        }, space)
-    }
-
-    pub fn from_handle_panic<'a>(handle: xr::Session) -> HandleRef<'a, xr::Session, SessionWrapper>  {
-        SESSIONS.get().unwrap().get(&handle).unwrap()
     }
 }
 

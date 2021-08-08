@@ -65,7 +65,7 @@ impl ActionSpace {
         &self,
         session: &SessionWrapper,
         sync_idx: u64,
-        subaction_bindings: &SubactionCollection<Vec<Arc<GodState>>>,
+        subaction_bindings: &SubactionBindings<GodState>,
     ) -> Result<()> {
         let instance = session.instance();
 

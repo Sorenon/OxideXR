@@ -231,7 +231,11 @@ pub unsafe extern "system" fn destroy_instance(instance: xr::Instance) -> xr::Re
 }
 
 pub unsafe extern "system" fn destroy_session(session: xr::Session) -> xr::Result {
-    let instance = SessionWrapper::from_handle_panic(session).instance();
+    let instance = match session.get_wrapper() {
+        Some(session) => session,
+        None => return xr::Result::ERROR_HANDLE_INVALID,
+    }
+    .instance();
 
     let result = instance.destroy_session(session);
 
@@ -377,7 +381,13 @@ fn destroy_space_internal(handle: xr::Space) -> Arc<SpaceWrapper> {
     remove_matching(&mut session.spaces.write().unwrap(), &space);
 
     if let SpaceType::ACTION(action_space) = &space.ty {
-        remove_matching(&mut session.action_spaces.get_mut(&action_space.action.handle).unwrap(), action_space);
+        remove_matching(
+            &mut session
+                .action_spaces
+                .get_mut(&action_space.action.handle)
+                .unwrap(),
+            action_space,
+        );
     }
 
     println!("Destroyed {:?}", handle);
@@ -386,6 +396,9 @@ fn destroy_space_internal(handle: xr::Space) -> Arc<SpaceWrapper> {
 }
 
 fn remove_matching<T>(vec: &mut Vec<Arc<T>>, to_remove: &Arc<T>) {
-    let index = vec.iter().position(|arc| Arc::ptr_eq(arc, &to_remove)).unwrap();
+    let index = vec
+        .iter()
+        .position(|arc| Arc::ptr_eq(arc, &to_remove))
+        .unwrap();
     vec.swap_remove(index);
 }

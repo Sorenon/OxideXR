@@ -17,6 +17,7 @@ use std::ptr;
 use std::sync::Arc;
 use std::sync::RwLock;
 
+use crate::wrappers::ActionWrapper;
 use crate::wrappers::InstanceWrapper;
 use crate::wrappers::SessionWrapper;
 
@@ -124,6 +125,15 @@ impl GodActionSet {
                         subaction_paths.clone(),
                         ActionType::Vector2fInput,
                     )?;
+                },
+                interaction_profiles::Feature::Haptic => {
+                    self.create_action(
+                        instance,
+                        subpath.clone(),
+                        None,
+                        subaction_paths.clone(),
+                        ActionType::VibrationOutput,
+                    )?;
                 }
                 _ => {
                     self.create_action(
@@ -200,6 +210,12 @@ pub struct GodState {
     pub action_state: RwLock<GodActionStateEnum>,
 }
 
+pub struct GodOutput {
+    pub action: Arc<GodAction>,
+    pub name: String,
+    pub subaction_path: xr::Path,
+}
+
 pub enum CachedActionStatesEnum {
     Boolean(CachedActionStates<openxr::ActionState<bool>>),
     Float(CachedActionStates<openxr::ActionState<f32>>),
@@ -211,10 +227,9 @@ pub struct CachedActionStates<T: OxideActionState> {
     pub main_state: T,
     pub subaction_states: Option<HashMap<xr::Path, T>>,
 }
-
-pub enum SubactionCollection<T> {
-    Singleton(T),
-    Subactions(HashMap<xr::Path, T>),
+pub enum SubactionBindings<T> {
+    Singleton(Vec<Arc<T>>),
+    Subactions(HashMap<xr::Path, Vec<Arc<T>>>),
 }
 
 #[derive(Copy, Clone)]
@@ -225,26 +240,68 @@ pub enum GodActionStateEnum {
     Pose(ActionStatePose),
 }
 
-impl<T> SubactionCollection<T> {
-    pub fn get_matching<'a>(&'a self, subaction_path: xr::Path) -> Result<Vec<&'a T>> {
+impl<T> SubactionBindings<T> {
+    pub fn new(
+        instance: &InstanceWrapper,
+        action: &ActionWrapper,
+        profile_map: &HashMap<xr::Path, HashMap<xr::Path, Arc<T>>>,
+    ) -> Self {
+        let subaction_paths = &action.subaction_paths;
+        if subaction_paths.is_empty() {
+            let mut vec = Vec::new();
+
+            for (profile, bindings) in action.bindings.read().unwrap().iter() {
+                let bindings_map = profile_map.get(profile).unwrap();
+                for binding in bindings {
+                    vec.push(bindings_map.get(binding).unwrap().clone());
+                }
+            }
+
+            SubactionBindings::Singleton(vec)
+        } else {
+            let mut map = subaction_paths
+                .iter()
+                .map(|subaction_path| (*subaction_path, Vec::new()))
+                .collect::<HashMap<_, _>>();
+
+            for (profile, bindings) in action.bindings.read().unwrap().iter() {
+                let bindings_map = profile_map.get(profile).unwrap();
+                for binding in bindings {
+                    let binding_str = instance.path_to_string(*binding).unwrap();
+                    let subaction_path = subaction_paths
+                        .iter()
+                        .filter(|subaction_path| {
+                            binding_str
+                                .starts_with(&instance.path_to_string(**subaction_path).unwrap())
+                        })
+                        .next()
+                        .unwrap();
+                    let vec = map.get_mut(subaction_path).unwrap();
+                    println!("{}", binding_str);
+                    vec.push(bindings_map.get(binding).unwrap().clone());
+                }
+            }
+
+            SubactionBindings::Subactions(map)
+        }
+    }
+
+    //TODO remove vec nesting
+    pub fn get_matching<'a>(&'a self, subaction_path: xr::Path) -> Result<Vec<&'a Vec<Arc<T>>>> {
         if subaction_path == xr::Path::NULL {
             Ok(match self {
-                SubactionCollection::Singleton(state) => {
+                SubactionBindings::Singleton(state) => {
                     vec![state]
                 }
-                SubactionCollection::Subactions(state_map) => {
-                    state_map.values().collect::<Vec<_>>()
-                }
+                SubactionBindings::Subactions(state_map) => state_map.values().collect::<Vec<_>>(),
             })
         } else {
             match self {
-                SubactionCollection::Singleton(_) => Err(xr::Result::ERROR_PATH_UNSUPPORTED),
-                SubactionCollection::Subactions(state_map) => {
-                    match state_map.get(&subaction_path) {
-                        Some(state) => Ok(vec![state]),
-                        None => Err(xr::Result::ERROR_PATH_UNSUPPORTED),
-                    }
-                }
+                SubactionBindings::Singleton(_) => Err(xr::Result::ERROR_PATH_UNSUPPORTED),
+                SubactionBindings::Subactions(state_map) => match state_map.get(&subaction_path) {
+                    Some(state) => Ok(vec![state]),
+                    None => Err(xr::Result::ERROR_PATH_UNSUPPORTED),
+                },
             }
         }
     }
@@ -288,10 +345,7 @@ impl CachedActionStatesEnum {
         }
     }
 
-    pub fn sync(
-        &mut self,
-        subaction_bindings: &SubactionCollection<Vec<Arc<GodState>>>,
-    ) -> Result<()> {
+    pub fn sync(&mut self, subaction_bindings: &SubactionBindings<GodState>) -> Result<()> {
         match self as &mut CachedActionStatesEnum {
             CachedActionStatesEnum::Boolean(states) => {
                 states.update_from_bindings(subaction_bindings);
@@ -346,19 +400,16 @@ impl<T: OxideActionState> CachedActionStates<T> {
         }
     }
 
-    pub fn update_from_bindings(
-        &mut self,
-        subaction_bindings: &SubactionCollection<Vec<Arc<GodState>>>,
-    ) {
+    pub fn update_from_bindings(&mut self, subaction_bindings: &SubactionBindings<GodState>) {
         match subaction_bindings {
-            SubactionCollection::Singleton(bindings) => {
+            SubactionBindings::Singleton(bindings) => {
                 debug_assert!(self.subaction_states.is_none());
 
                 self.main_state
                     .sync_from_god_states(bindings.iter().map(|a| &a.action_state))
                     .unwrap();
             }
-            SubactionCollection::Subactions(bindings_map) => {
+            SubactionBindings::Subactions(bindings_map) => {
                 let subaction_states = self.subaction_states.as_mut().unwrap();
                 debug_assert!(bindings_map.len() <= subaction_states.len());
 
