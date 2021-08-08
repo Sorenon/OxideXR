@@ -33,6 +33,13 @@ static SPACES:      OnceCell<HandleMap<xr::Space, SpaceWrapper>> = OnceCell::new
 
 pub unsafe fn static_init() {
     if INSTANCES.get().is_none() {
+        #[cfg(feature = "vscode_dbg")]
+        if let Some(vscode) = option_env!("VS_CODE") {
+            let url = format!("vscode://vadimcn.vscode-lldb/launch/config?{{'request':'attach','pid':{}}}", std::process::id());
+            std::process::Command::new(vscode).arg("--open-url").arg(url).output().unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(1000)); // Wait for debugger to attach
+        }
+
         INSTANCES.set(DashMap::new()).unwrap();
         SESSIONS.set(DashMap::new()).map_err(|_| {}).unwrap();
         ACTIONS.set(DashMap::new()).unwrap();
@@ -98,7 +105,7 @@ pub struct SessionWrapper {
     pub god_states: HashMap<xr::Path/* interactionProfile */, HashMap<xr::Path /* binding */, Arc<GodState>>>,
 
     //The bindings for each attached input action
-    pub attached_action_sets: OnceCell<HashMap<xr::ActionSet, HashMap<xr::Action, SubactionCollection<Vec<Arc<GodState>>>>>>,
+    pub attached_action_sets: OnceCell<HashMap<xr::ActionSet, HashMap<xr::Action, RwLock<SubactionCollection<Vec<Arc<GodState>>>>>>>,
 
     //The cached state of the attached application actions (updated every sync call)
     pub cached_action_states: OnceCell<HashMap<xr::Action, RwLock<CachedActionStatesEnum>>>,

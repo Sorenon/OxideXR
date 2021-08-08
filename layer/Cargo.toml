@@ -9,7 +9,13 @@ crate-type = ["cdylib"]
 bench = false
 
 [dependencies]
-openxr = {  git = "https://github.com/Sorenon/openxrs", default-features = false, features = ["layer"] }
+openxr = { git = "https://github.com/Sorenon/openxrs", default-features = false, features = ["layer"] }
 dashmap = "4.0"
 once_cell = "1.8"
 common = { path = "../common" }
+
+[env]
+VS_CODE = "C:\\Program Files\\VSCodium\\VSCodium.exe"
+
+[features]
+vscode_dbg = []
