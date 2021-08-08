@@ -61,6 +61,7 @@ pub unsafe extern "system" fn attach_session_action_sets(
 
             if ActionType::from_raw(action.action_type).is_input() {
                 let subaction_paths = &action.subaction_paths;
+                // println!("{}, {:?}", action.localized_name, subaction_paths);
                 if subaction_paths.is_empty() {
                     let mut vec = Vec::new();
 
@@ -74,7 +75,10 @@ pub unsafe extern "system" fn attach_session_action_sets(
 
                     attached_actions.insert(action.handle, SubactionCollection::Singleton(vec));
                 } else {
-                    let mut map = HashMap::new();
+                    let mut map = subaction_paths
+                        .iter()
+                        .map(|subaction_path| (*subaction_path, Vec::new()))
+                        .collect::<HashMap<_, _>>();
 
                     for (profile, bindings) in action.bindings.read().unwrap().iter() {
                         let god_states = session.god_states.get(profile).unwrap();
@@ -90,13 +94,7 @@ pub unsafe extern "system" fn attach_session_action_sets(
                                 })
                                 .next()
                                 .unwrap();
-                            let vec = match map.get_mut(subaction_path) {
-                                Some(vec) => vec,
-                                None => {
-                                    map.insert(*subaction_path, Vec::new());
-                                    map.get_mut(subaction_path).unwrap()
-                                }
-                            };
+                            let vec = map.get_mut(subaction_path).unwrap();
                             vec.push(god_state.clone());
                         }
                     }
@@ -186,8 +184,8 @@ pub unsafe extern "system" fn sync_actions(
     let cached_action_states = session.cached_action_states.get().unwrap();
     let sync_idx = {
         let mut lock = session.sync_idx.write().unwrap();
-        let idx = *lock;
-        *lock = idx + 1;
+        let idx = *lock + 1;
+        *lock = idx;
         idx
     };
     for active_action_set in active_action_sets {

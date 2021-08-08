@@ -158,6 +158,7 @@ unsafe extern "system" fn instance_proc_addr(instance: xr::Instance, name: *cons
             "xrDestroySession" => std::mem::transmute(injections::destroy_session as pfn::DestroySession),
             "xrDestroyActionSet" => std::mem::transmute(injections::destroy_action_set as pfn::DestroyActionSet),
             "xrDestroyAction" => std::mem::transmute(injections::destroy_action as pfn::DestroyAction),
+            "xrDestroySpace" => std::mem::transmute(injections::destroy_space as pfn::DestroySpace),
             
             //Instance methods
             "xrSuggestInteractionProfileBindings" => std::mem::transmute(injections::instance::suggest_interaction_profile_bindings as pfn::SuggestInteractionProfileBindings),

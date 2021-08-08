@@ -2,6 +2,7 @@ pub mod instance;
 pub mod session;
 pub mod space;
 
+use std::ops::Deref;
 use std::ptr;
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -163,12 +164,12 @@ pub unsafe extern "system" fn create_action_space(
     });
 
     match session.action_spaces.get_mut(&action.handle) {
-        Some(mut action_spaces) => {
-            action_spaces.push(action_space)
-        },
+        Some(mut action_spaces) => action_spaces.push(action_space),
         None => {
-            session.action_spaces.insert(action.handle, vec![action_space]);
-        },
+            session
+                .action_spaces
+                .insert(action.handle, vec![action_space]);
+        }
     }
 
     //Add this space to the wrapper tree
@@ -214,6 +215,8 @@ pub unsafe extern "system" fn create_reference_space(
 /*
 START DESTRUCTORS
 */
+
+//TODO clean up this mess using the Drop trait
 
 pub unsafe extern "system" fn destroy_instance(instance: xr::Instance) -> xr::Result {
     let result = InstanceWrapper::from_handle_panic(instance).destroy_instance();
@@ -284,6 +287,37 @@ pub unsafe extern "system" fn destroy_action(action: xr::Action) -> xr::Result {
     result
 }
 
+pub unsafe extern "system" fn destroy_space(handle: xr::Space) -> xr::Result {
+    let space = match handle.get_wrapper() {
+        Some(space) => space,
+        None => return xr::Result::ERROR_HANDLE_INVALID,
+    };
+    let session = space.session();
+    let instance = session.instance();
+
+    if let SpaceType::ACTION(action_space) = &space.ty {
+        let mut cur_binding = action_space.cur_binding.write().unwrap();
+        if let Some(cur_binding) = cur_binding.deref() {
+            if let Err(result) = instance.destroy_space(cur_binding.space_handle) {
+                return result;
+            }
+        }
+        *cur_binding = None;
+    };
+
+    if let Err(result) = instance.destroy_space(handle) {
+        return result;
+    }
+
+    drop(space);
+
+    destroy_space_internal(handle);
+
+    println!("Destroyed {:?}", handle);
+
+    xr::Result::SUCCESS
+}
+
 fn destroy_instance_internal(handle: xr::Instance) {
     let instance = instances().remove(&handle).unwrap();
 
@@ -321,7 +355,37 @@ fn destroy_action_set_internal(handle: xr::ActionSet) -> Arc<ActionSetWrapper> {
 fn destroy_action_internal(handle: xr::Action) -> Arc<ActionWrapper> {
     let action = actions().remove(&handle).unwrap().1;
 
+    // for session in sessions() {
+    //     if let Some(spaces) = session.action_spaces.get(&handle) {
+    //         let spaces = spaces.clone();
+    //         for space in spaces {
+    //             destroy_space_internal(space);
+    //         }
+    //     }
+    // }
+
     println!("Destroyed {:?}", handle);
 
     action
+}
+
+fn destroy_space_internal(handle: xr::Space) -> Arc<SpaceWrapper> {
+    let space = spaces().remove(&handle).unwrap().1;
+
+    let session = space.session.upgrade().unwrap();
+
+    remove_matching(&mut session.spaces.write().unwrap(), &space);
+
+    if let SpaceType::ACTION(action_space) = &space.ty {
+        remove_matching(&mut session.action_spaces.get_mut(&action_space.action.handle).unwrap(), action_space);
+    }
+
+    println!("Destroyed {:?}", handle);
+
+    space
+}
+
+fn remove_matching<T>(vec: &mut Vec<Arc<T>>, to_remove: &Arc<T>) {
+    let index = vec.iter().position(|arc| Arc::ptr_eq(arc, &to_remove)).unwrap();
+    vec.swap_remove(index);
 }

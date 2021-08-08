@@ -29,7 +29,7 @@ pub struct ActionSpace {
 }
 
 pub struct ActionSpaceBinding {
-    pub handle: xr::Space,
+    pub space_handle: xr::Space,
     pub binding: Arc<GodState>,
 }
 
@@ -37,16 +37,18 @@ impl SpaceWrapper {
     pub fn get_handle(&self) -> Option<xr::Space> {
         match &self.ty {
             SpaceType::ACTION(action_space) => {
-                // if *action_space.sync_idx.read().unwrap() == *self.session().sync_idx.read().unwrap() {
-                action_space
-                    .cur_binding
-                    .read()
-                    .unwrap()
-                    .as_ref()
-                    .map(|binding| binding.handle)
-                // } else {
-                // None
-                // }
+                if *action_space.sync_idx.read().unwrap()
+                    == *self.session().sync_idx.read().unwrap()
+                {
+                    action_space
+                        .cur_binding
+                        .read()
+                        .unwrap()
+                        .as_ref()
+                        .map(|binding| binding.space_handle)
+                } else {
+                    None
+                }
             }
             SpaceType::REFERENCE => Some(self.unchecked_handle),
         }
@@ -76,7 +78,7 @@ impl ActionSpace {
                     if state.is_active {
                         return Ok(());
                     } else {
-                        instance.destroy_space(cur_binding.handle)?;
+                        instance.destroy_space(cur_binding.space_handle)?;
                     }
                 }
                 _ => panic!("Action space somehow bound to non-pose action"),
@@ -96,7 +98,7 @@ impl ActionSpace {
 
         if let Some(binding) = binding {
             *cur_binding = Some(ActionSpaceBinding {
-                handle: session.create_action_space(&xr::ActionSpaceCreateInfo {
+                space_handle: session.create_action_space(&xr::ActionSpaceCreateInfo {
                     ty: xr::ActionSpaceCreateInfo::TYPE,
                     next: ptr::null(),
                     action: binding.action.handle,

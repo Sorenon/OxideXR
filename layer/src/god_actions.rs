@@ -16,10 +16,7 @@ use std::ops::Deref;
 use std::ptr;
 use std::sync::Arc;
 use std::sync::RwLock;
-use std::sync::Weak;
 
-use crate::wrappers::ActionSpace;
-use crate::wrappers::ActionSpaceBinding;
 use crate::wrappers::InstanceWrapper;
 use crate::wrappers::SessionWrapper;
 
