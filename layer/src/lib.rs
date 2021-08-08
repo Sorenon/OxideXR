@@ -150,6 +150,8 @@ unsafe extern "system" fn instance_proc_addr(instance: xr::Instance, name: *cons
             "xrCreateSession" => std::mem::transmute(injections::create_session as pfn::CreateSession),
             "xrCreateActionSet" => std::mem::transmute(injections::create_action_set as pfn::CreateActionSet),
             "xrCreateAction" => std::mem::transmute(injections::create_action as pfn::CreateAction),
+            "xrCreateActionSpace" => std::mem::transmute(injections::create_action_space as pfn::CreateActionSpace),
+            "xrCreateReferenceSpace" => std::mem::transmute(injections::create_reference_space as pfn::CreateReferenceSpace),
 
             //Destructors
             "xrDestroyInstance" => std::mem::transmute(injections::destroy_instance as pfn::DestroyInstance),
@@ -167,9 +169,11 @@ unsafe extern "system" fn instance_proc_addr(instance: xr::Instance, name: *cons
             "xrGetActionStateFloat" => std::mem::transmute(injections::session::get_action_state_float as pfn::GetActionStateFloat),
             "xrGetActionStateVector2f" => std::mem::transmute(injections::session::get_action_state_vector2f as pfn::GetActionStateVector2f),
             "xrGetActionStatePose" => std::mem::transmute(injections::session::get_action_state_pose as pfn::GetActionStatePose),
+            "xrLocateViews" => std::mem::transmute(injections::session::locate_views as pfn::LocateViews),
 
-            "xrCreateActionSpace" => std::mem::transmute(injections::session::create_action_space as pfn::CreateActionSpace),
-            "xrLocateSpace" => std::mem::transmute(injections::session::locate_space as pfn::LocateSpace),
+            //Space methods
+            "xrLocateSpace" => std::mem::transmute(injections::space::locate_space as pfn::LocateSpace),
+
             _ => (*function).unwrap()
         }
     );

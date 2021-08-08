@@ -1,11 +1,11 @@
+use core::slice;
 use std::collections::HashMap;
+use std::ops::Deref;
 use std::path::Path;
 use std::ptr;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock, Weak};
 
-use crate::god_actions::{
-    self, CachedActionStatesEnum, SubactionCollection,
-};
+use crate::god_actions::{self, CachedActionStatesEnum, SubactionCollection};
 use crate::validation::Validate;
 use crate::wrappers::*;
 use common::serial::get_uuid;
@@ -146,23 +146,24 @@ pub unsafe extern "system" fn sync_actions(
     };
     let instance = session.instance();
 
-    let god_sets = instance
-        .god_action_sets
-        .values()
-        .map(|god_set| xr::ActiveActionSet {
-            action_set: god_set.handle,
-            subaction_path: xr::Path::NULL,
-        })
-        .collect::<Vec<_>>();
+    let result = {
+        let god_sets = instance
+            .god_action_sets
+            .values()
+            .map(|god_set| xr::ActiveActionSet {
+                action_set: god_set.handle,
+                subaction_path: xr::Path::NULL,
+            })
+            .collect::<Vec<_>>();
 
-    let my_sync_info = xr::ActionsSyncInfo {
-        ty: xr::ActionsSyncInfo::TYPE,
-        next: ptr::null(),
-        count_active_action_sets: god_sets.len() as u32,
-        active_action_sets: god_sets.as_ptr(),
+        let my_sync_info = xr::ActionsSyncInfo {
+            ty: xr::ActionsSyncInfo::TYPE,
+            next: ptr::null(),
+            count_active_action_sets: god_sets.len() as u32,
+            active_action_sets: god_sets.as_ptr(),
+        };
+        session.sync_actions(&my_sync_info)
     };
-
-    let result = session.sync_actions(&my_sync_info);
     if result.into_raw() < 0 {
         return result;
     }
@@ -182,6 +183,13 @@ pub unsafe extern "system" fn sync_actions(
         (*app_sync_info).count_active_action_sets as usize,
     );
     let attached_actions = session.attached_action_sets.get().unwrap();
+    let cached_action_states = session.cached_action_states.get().unwrap();
+    let sync_idx = {
+        let mut lock = session.sync_idx.write().unwrap();
+        let idx = *lock;
+        *lock = idx + 1;
+        idx
+    };
     for active_action_set in active_action_sets {
         if active_action_set.action_set.get_wrapper().is_none() {
             return xr::Result::ERROR_HANDLE_INVALID;
@@ -190,22 +198,30 @@ pub unsafe extern "system" fn sync_actions(
             Some(actions) => actions,
             None => return xr::Result::ERROR_ACTIONSET_NOT_ATTACHED,
         };
-        assert_eq!(active_action_set.subaction_path, xr::Path::NULL);
+        assert_eq!(active_action_set.subaction_path, xr::Path::NULL); //TODO decipher how active_action_set.subaction_path is actually supposed to work
         for (action_handle, subaction_bindings) in actions {
-            let mut action_cache_states = session
-                .cached_action_states
-                .get()
-                .unwrap()
+            let mut action_cache_states = cached_action_states
                 .get(action_handle)
                 .unwrap()
                 .write()
                 .unwrap();
 
-            match &mut action_cache_states as &mut CachedActionStatesEnum {
-                CachedActionStatesEnum::Boolean(states) => states.update_from_bindings(subaction_bindings),
-                CachedActionStatesEnum::Float(states) => states.update_from_bindings(subaction_bindings),
-                CachedActionStatesEnum::Vector2f(states) => states.update_from_bindings(subaction_bindings),
-                CachedActionStatesEnum::Pose(states) => states.update_from_bindings(subaction_bindings),
+            if let Err(result) = action_cache_states.sync(subaction_bindings) {
+                return result;
+            }
+
+            if let god_actions::CachedActionStatesEnum::Pose(_) =
+                &action_cache_states as &CachedActionStatesEnum
+            {
+                if let Some(action_spaces) = session.action_spaces.get_mut(action_handle) {
+                    for action_space in action_spaces.iter() {
+                        if let Err(result) =
+                            action_space.sync(&session, sync_idx, subaction_bindings)
+                        {
+                            return result;
+                        }
+                    }
+                }
             }
         }
     }
@@ -406,26 +422,71 @@ pub unsafe extern "system" fn get_action_state_pose(
     }
 }
 
-pub unsafe extern "system" fn create_action_space(
+pub unsafe extern "system" fn locate_views(
     session: xr::Session,
-    create_info: *const xr::ActionSpaceCreateInfo,
-    space: *mut xr::Space,
+    view_locate_info: *const xr::ViewLocateInfo,
+    view_state: *mut xr::ViewState,
+    view_capacity_input: u32,
+    view_count_output: *mut u32,
+    views: *mut xr::View,
 ) -> xr::Result {
+    let view_locate_info = &*view_locate_info;
+
     let session = match session.get_wrapper() {
         Some(session) => session,
         None => return xr::Result::ERROR_HANDLE_INVALID,
     };
 
+    let space = match view_locate_info.space.get_wrapper() {
+        Some(space) => space,
+        None => return xr::Result::ERROR_HANDLE_INVALID,
+    };
 
-}
+    if !Arc::ptr_eq(&session, &Weak::upgrade(&space.session).unwrap()) {
+        return xr::Result::ERROR_VALIDATION_FAILURE;
+    }
 
-pub unsafe extern "system" fn locate_space(
-    space: xr::Space,
-    base_space: xr::Space,
-    time: xr::Time,
-    location: *mut xr::SpaceLocation,
-) -> xr::Result {
+    let space_handle = match space.get_handle() {
+        Some(space_handle) => space_handle,
+        None => {
+            //space is an unbound action space
+            let mut my_view_locate_info = *view_locate_info;
+            my_view_locate_info.space = space.unchecked_handle;
 
+            let result = (session.instance().core.locate_views)(
+                session.handle,
+                &my_view_locate_info,
+                view_state,
+                view_capacity_input,
+                view_count_output,
+                views,
+            );
+
+            if result.into_raw() < 0 { return result; }
+
+            (*view_state).view_state_flags = xr::ViewStateFlags::EMPTY;
+            if view_capacity_input != 0 {
+                for view in slice::from_raw_parts_mut(views, view_capacity_input as usize) {
+                    view.pose = Default::default();
+                    view.pose.orientation.w = 1.;
+                }
+            }
+
+            return result;
+        }
+    };
+
+    let mut my_view_locate_info = *view_locate_info;
+    my_view_locate_info.space = space_handle;
+
+    (session.instance().core.locate_views)(
+        session.handle,
+        &my_view_locate_info,
+        view_state,
+        view_capacity_input,
+        view_count_output,
+        views,
+    )
 }
 
 fn update_application_actions(instance: &InstanceWrapper, action_set_handles: &[xr::ActionSet]) {

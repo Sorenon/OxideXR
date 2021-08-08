@@ -1,3 +1,5 @@
+pub mod space;
+
 use dashmap::DashMap;
 use once_cell::sync::OnceCell;
 use openxr::Result;
@@ -15,6 +17,9 @@ use std::sync::Arc;
 use crate::god_actions::CachedActionStatesEnum;
 use crate::god_actions::GodState;
 use crate::god_actions::SubactionCollection;
+use crate::util;
+
+pub use self::space::*;
 
 type HandleMap<H, T> = DashMap<H, Arc<T>>;
 type HandleRef<'a, H, T> = dashmap::mapref::one::Ref<'a, H, Arc<T>>;
@@ -23,6 +28,7 @@ static INSTANCES:   OnceCell<HandleMap<xr::Instance, InstanceWrapper>> = OnceCel
 static SESSIONS:    OnceCell<HandleMap<xr::Session, SessionWrapper>> = OnceCell::new();
 static ACTIONS:     OnceCell<HandleMap<xr::Action, ActionWrapper>> = OnceCell::new();
 static ACTION_SETS: OnceCell<HandleMap<xr::ActionSet, ActionSetWrapper>> = OnceCell::new();
+static SPACES:      OnceCell<HandleMap<xr::Space, SpaceWrapper>> = OnceCell::new();
 
 pub unsafe fn static_init() {
     if INSTANCES.get().is_none() {
@@ -30,6 +36,7 @@ pub unsafe fn static_init() {
         SESSIONS.set(DashMap::new()).map_err(|_| {}).unwrap();
         ACTIONS.set(DashMap::new()).unwrap();
         ACTION_SETS.set(DashMap::new()).unwrap();
+        SPACES.set(DashMap::new()).map_err(|_| {}).unwrap();
     }
 }
 
@@ -40,6 +47,7 @@ unsafe fn _assert_thread_safe() {
     let _: &T = &std::mem::zeroed::<SessionWrapper>();
     let _: &T = &std::mem::zeroed::<ActionSetWrapper>();
     let _: &T = &std::mem::zeroed::<ActionWrapper>();
+    let _: &T = &std::mem::zeroed::<SpaceWrapper>();
 }
 
 pub fn instances() -> &'static HandleMap<xr::Instance, InstanceWrapper> {
@@ -56,6 +64,10 @@ pub fn action_sets() -> &'static HandleMap<xr::ActionSet, ActionSetWrapper> {
 
 pub fn actions() -> &'static HandleMap<xr::Action, ActionWrapper> {
     ACTIONS.get().unwrap()
+}
+
+pub fn spaces() -> &'static HandleMap<xr::Space, SpaceWrapper> {
+    SPACES.get().unwrap()
 }
 
 pub struct InstanceWrapper {
@@ -79,6 +91,7 @@ pub struct InstanceWrapper {
 pub struct SessionWrapper {
     pub handle: xr::Session,
     pub instance: Weak<InstanceWrapper>,
+    pub spaces: RwLock<Vec<Arc<SpaceWrapper>>>,
 
     //The cached state of every input path (updated every sync call)
     pub god_states: HashMap<xr::Path/* interactionProfile */, HashMap<xr::Path /* binding */, Arc<RwLock<GodState>>>>,
@@ -88,6 +101,11 @@ pub struct SessionWrapper {
 
     //The cached state of the attached application actions (updated every sync call)
     pub cached_action_states: OnceCell<HashMap<xr::Action, RwLock<CachedActionStatesEnum>>>,
+
+    //nb: For some unholy reason the OpenXR spec allows action spaces to be created for actions which have not been attached to the session 
+    pub action_spaces: DashMap<xr::Action, Vec<Arc<ActionSpace>>>,
+
+    pub sync_idx: RwLock<u64>, 
 }
 
 #[derive(Debug)]
@@ -213,6 +231,16 @@ impl InstanceWrapper {
         }
     }
 
+    #[inline]
+    pub fn destroy_space(
+        &self,
+        space: xr::Space
+    ) -> Result<xr::Result> {
+        util::check(unsafe {
+            (self.core.destroy_space)(space)
+        })
+    }
+
     pub fn path_to_string(
         &self, 
         path: xr::Path,
@@ -249,9 +277,12 @@ impl SessionWrapper {
         let mut wrapper = Self {
             handle,
             instance: Arc::downgrade(instance),
+            spaces: Default::default(),
             attached_action_sets: Default::default(),
             cached_action_states: Default::default(),
             god_states: Default::default(),
+            action_spaces: DashMap::new(),
+            sync_idx: RwLock::new(0),
         };
     
         for (profile_name, god_action_set) in &instance.god_action_sets {
@@ -272,7 +303,7 @@ impl SessionWrapper {
                         states.insert(
                             instance.string_to_path(&name)?,
                             Arc::new(RwLock::new(crate::god_actions::GodState {
-                                action_handle: god_action.handle,
+                                action: god_action.clone(),
                                 name,
                                 subaction_path: *subaction_path,
                                 action_state: crate::god_actions::GodActionStateEnum::new(god_action.action_type).unwrap(),
@@ -284,7 +315,7 @@ impl SessionWrapper {
     
             let bindings = states.iter().map(|(path, god_state)| {
                 xr::ActionSuggestedBinding {
-                    action: god_state.read().unwrap().action_handle,
+                    action: god_state.read().unwrap().action.handle,
                     binding: *path,
                 }
             }).collect::<Vec<_>>();
@@ -401,6 +432,17 @@ impl SessionWrapper {
         }
     }
 
+    #[inline]
+    pub fn create_action_space(
+        &self,
+        create_info: *const xr::ActionSpaceCreateInfo
+    ) -> Result<xr::Space> {
+        let mut space = xr::Space::NULL;
+        util::check2(unsafe {
+            (self.instance().core.create_action_space)(self.handle, create_info, &mut space)
+        }, space)
+    }
+
     pub fn from_handle_panic<'a>(handle: xr::Session) -> HandleRef<'a, xr::Session, SessionWrapper>  {
         SESSIONS.get().unwrap().get(&handle).unwrap()
     }
@@ -481,6 +523,14 @@ impl HandleWrapper for ActionWrapper {
     }
 }
 
+impl HandleWrapper for SpaceWrapper {
+    type HandleType = xr::Space;
+
+    fn all_handles() -> &'static HandleMap<Self::HandleType, Self> where Self: 'static {
+        spaces()
+    }
+}
+
 pub trait WrappedHandle {
     type Wrapper: HandleWrapper<HandleType = Self>;
 
@@ -511,4 +561,8 @@ impl WrappedHandle for xr::ActionSet {
 
 impl WrappedHandle for xr::Action {
     type Wrapper = ActionWrapper;
+}
+
+impl WrappedHandle for xr::Space {
+    type Wrapper = SpaceWrapper;
 }

@@ -1,6 +1,8 @@
 pub mod instance;
 pub mod session;
+pub mod space;
 
+use std::ptr;
 use std::sync::Arc;
 use std::sync::RwLock;
 
@@ -27,7 +29,7 @@ pub unsafe extern "system" fn create_session(
         Err(result) => {
             instance.destroy_session(*session);
             return result;
-        },
+        }
     };
 
     //Add this session to the wrapper tree
@@ -106,6 +108,105 @@ pub unsafe extern "system" fn create_action(
 
     //Add this action to the wrapper map
     actions().insert(*action, wrapper);
+
+    result
+}
+
+pub unsafe extern "system" fn create_action_space(
+    session: xr::Session,
+    create_info: *const xr::ActionSpaceCreateInfo,
+    handle: *mut xr::Space,
+) -> xr::Result {
+    let create_info = *create_info;
+    let session = match session.get_wrapper() {
+        Some(session) => session,
+        None => return xr::Result::ERROR_HANDLE_INVALID,
+    };
+    let action = match create_info.action.get_wrapper() {
+        Some(action) => action,
+        None => return xr::Result::ERROR_HANDLE_INVALID,
+    };
+
+    if create_info.subaction_path != xr::Path::NULL {
+        if !action.subaction_paths.contains(&create_info.subaction_path) {
+            return xr::Result::ERROR_PATH_UNSUPPORTED;
+        }
+    }
+
+    let result = {
+        let create_info = xr::ReferenceSpaceCreateInfo {
+            ty: xr::ReferenceSpaceCreateInfo::TYPE,
+            next: ptr::null(),
+            reference_space_type: xr::ReferenceSpaceType::LOCAL,
+            pose_in_reference_space: create_info.pose_in_action_space,
+        };
+        (session.instance().core.create_reference_space)(session.handle, &create_info, handle)
+    };
+    if result.into_raw() < 0 {
+        return result;
+    }
+
+    let action_space = Arc::new(ActionSpace {
+        action: action.clone(),
+        subaction_path: create_info.subaction_path,
+        pose_in_action_space: create_info.pose_in_action_space,
+
+        sync_idx: RwLock::new(0),
+
+        cur_binding: RwLock::new(None),
+    });
+
+    let wrapper = Arc::new(SpaceWrapper {
+        unchecked_handle: *handle,
+        session: Arc::downgrade(&session),
+        ty: SpaceType::ACTION(action_space.clone()),
+    });
+
+    match session.action_spaces.get_mut(&action.handle) {
+        Some(mut action_spaces) => {
+            action_spaces.push(action_space)
+        },
+        None => {
+            session.action_spaces.insert(action.handle, vec![action_space]);
+        },
+    }
+
+    //Add this space to the wrapper tree
+    session.spaces.write().unwrap().push(wrapper.clone());
+
+    //Add this space to the wrapper map
+    spaces().insert(*handle, wrapper);
+
+    xr::Result::SUCCESS
+}
+
+pub unsafe extern "system" fn create_reference_space(
+    session: xr::Session,
+    create_info: *const xr::ReferenceSpaceCreateInfo,
+    handle: *mut xr::Space,
+) -> xr::Result {
+    let session = match session.get_wrapper() {
+        Some(session) => session,
+        None => return xr::Result::ERROR_HANDLE_INVALID,
+    };
+
+    let result =
+        (session.instance().core.create_reference_space)(session.handle, create_info, handle);
+    if result.into_raw() < 0 {
+        return result;
+    }
+
+    let wrapper = Arc::new(SpaceWrapper {
+        unchecked_handle: *handle,
+        session: Arc::downgrade(&session),
+        ty: SpaceType::REFERENCE,
+    });
+
+    //Add this space to the wrapper tree
+    session.spaces.write().unwrap().push(wrapper.clone());
+
+    //Add this space to the wrapper map
+    spaces().insert(*handle, wrapper);
 
     result
 }

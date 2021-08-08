@@ -1,5 +1,8 @@
 use std::ffi::CStr;
 
+use openxr::Result;
+use openxr::sys as xr;
+
 pub const LAYER_NAME: &'static str = "XR_APILAYER_BULLCH_oxidexr";
 pub const LAYER_VERSION: u32 = 1;
 
@@ -19,4 +22,20 @@ pub fn place_cstr(out: &mut [std::os::raw::c_char], s: &str) {
         *o = i as std::os::raw::c_char;
     }
     out[s.len()] = 0;
+}
+
+pub fn check(result: xr::Result) -> Result<xr::Result> {
+    if result.into_raw() < 0 {
+        Err(result)
+    } else {
+        Ok(result)
+    }
+}
+
+pub fn check2<T>(result: xr::Result, out: T) -> Result<T> {
+    if result.into_raw() < 0 {
+        Err(result)
+    } else {
+        Ok(out)
+    }
 }

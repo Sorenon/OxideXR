@@ -15,7 +15,10 @@ use std::ops::Add;
 use std::ptr;
 use std::sync::Arc;
 use std::sync::RwLock;
+use std::sync::Weak;
 
+use crate::wrappers::ActionSpace;
+use crate::wrappers::ActionSpaceBinding;
 use crate::wrappers::InstanceWrapper;
 use crate::wrappers::SessionWrapper;
 
@@ -39,7 +42,7 @@ fn sanitize(name: &str) -> String {
 pub struct GodActionSet {
     pub handle: xr::ActionSet,
     pub subaction_paths: Vec<String>,
-    pub god_actions: HashMap<xr::Path, GodAction>,
+    pub god_actions: HashMap<xr::Path, Arc<GodAction>>,
     pub name: String,
 }
 
@@ -171,12 +174,13 @@ impl GodActionSet {
 
         self.god_actions.insert(
             instance.string_to_path(&name)?,
-            GodAction {
+            Arc::new(GodAction {
                 handle,
+                profile_name: self.name.clone(),
                 name,
                 subaction_paths,
                 action_type,
-            },
+            }),
         );
 
         Ok(())
@@ -185,13 +189,14 @@ impl GodActionSet {
 
 pub struct GodAction {
     pub handle: xr::Action,
+    pub profile_name: String,
     pub name: String,
     pub subaction_paths: Vec<xr::Path>,
     pub action_type: ActionType,
 }
 
 pub struct GodState {
-    pub action_handle: xr::Action,
+    pub action: Arc<GodAction>,
     pub name: String,
     pub subaction_path: xr::Path,
     pub action_state: GodActionStateEnum,
@@ -220,6 +225,31 @@ pub enum GodActionStateEnum {
     Float(openxr::ActionState<f32>),
     Vector2f(openxr::ActionState<Vector2f>),
     Pose(ActionStatePose),
+}
+
+impl<T> SubactionCollection<T> {
+    pub fn get_matching<'a>(&'a self, subaction_path: xr::Path) -> Result<Vec<&'a T>> {
+        if subaction_path == xr::Path::NULL {
+            Ok(match self {
+                SubactionCollection::Singleton(state) => {
+                    vec![state]
+                }
+                SubactionCollection::Subactions(state_map) => {
+                    state_map.values().collect::<Vec<_>>()
+                }
+            })
+        } else {
+            match self {
+                SubactionCollection::Singleton(_) => Err(xr::Result::ERROR_PATH_UNSUPPORTED),
+                SubactionCollection::Subactions(state_map) => {
+                    match state_map.get(&subaction_path) {
+                        Some(state) => Ok(vec![state]),
+                        None => Err(xr::Result::ERROR_PATH_UNSUPPORTED),
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl CachedActionStatesEnum {
@@ -259,6 +289,27 @@ impl CachedActionStatesEnum {
             _ => panic!(),
         }
     }
+
+    pub fn sync(
+        &mut self,
+        subaction_bindings: &SubactionCollection<Vec<Arc<RwLock<GodState>>>>,
+    ) -> Result<()> {
+        match self as &mut CachedActionStatesEnum {
+            CachedActionStatesEnum::Boolean(states) => {
+                states.update_from_bindings(subaction_bindings);
+            }
+            CachedActionStatesEnum::Float(states) => {
+                states.update_from_bindings(subaction_bindings);
+            }
+            CachedActionStatesEnum::Vector2f(states) => {
+                states.update_from_bindings(subaction_bindings);
+            }
+            CachedActionStatesEnum::Pose(states) => {
+                states.update_from_bindings(subaction_bindings);
+            }
+        }
+        Ok(())
+    }
 }
 
 impl<T: OxideActionState> CachedActionStates<T> {
@@ -297,38 +348,46 @@ impl<T: OxideActionState> CachedActionStates<T> {
         }
     }
 
-    pub fn update_from_bindings(&mut self, subaction_bindings: &SubactionCollection<Vec<Arc<RwLock<GodState>>>>) {
+    pub fn update_from_bindings(
+        &mut self,
+        subaction_bindings: &SubactionCollection<Vec<Arc<RwLock<GodState>>>>,
+    ) {
         match subaction_bindings {
             SubactionCollection::Singleton(bindings) => {
                 debug_assert!(self.subaction_states.is_none());
 
-                self
-                    .main_state
-                    .sync_from_god_states(
-                        bindings.iter().map(|a| a.read().unwrap().action_state),
-                    )
+                self.main_state
+                    .sync_from_god_states(bindings.iter().map(|a| a.read().unwrap().action_state))
                     .unwrap();
             }
             SubactionCollection::Subactions(bindings_map) => {
                 let subaction_states = self.subaction_states.as_mut().unwrap();
                 debug_assert!(bindings_map.len() <= subaction_states.len());
 
-                for (states, bindings) in subaction_states.iter_mut().filter_map(|(subaction_path, states)| {
-                    bindings_map.get(subaction_path).map(|bindings| { (states, bindings) })
-                }) {
+                for (states, bindings) in
+                    subaction_states
+                        .iter_mut()
+                        .filter_map(|(subaction_path, states)| {
+                            bindings_map
+                                .get(subaction_path)
+                                .map(|bindings| (states, bindings))
+                        })
+                {
                     states
-                    .sync_from_god_states(
-                        bindings.iter().map(|a| a.read().unwrap().action_state),
-                    )
-                    .unwrap();
+                        .sync_from_god_states(
+                            bindings.iter().map(|a| a.read().unwrap().action_state),
+                        )
+                        .unwrap();
                 }
 
-                self
-                .main_state
-                .sync_from_god_states(
-                    bindings_map.values().flatten().map(|a| a.read().unwrap().action_state),
-                )
-                .unwrap();
+                self.main_state
+                    .sync_from_god_states(
+                        bindings_map
+                            .values()
+                            .flatten()
+                            .map(|a| a.read().unwrap().action_state),
+                    )
+                    .unwrap();
             }
         }
     }
@@ -455,7 +514,7 @@ impl GodState {
         xr::ActionStateGetInfo {
             ty: xr::ActionStateGetInfo::TYPE,
             next: ptr::null(),
-            action: self.action_handle,
+            action: self.action.handle,
             subaction_path: self.subaction_path,
         }
     }
@@ -592,7 +651,12 @@ impl OxideActionState for openxr::ActionState<f32> {
         } else {
             if self.current_state != new_state {
                 //This can crash TODO estimate last_change_time when time travel occurs
-                debug_assert!(new_last_change_time.as_nanos() > self.last_change_time.as_nanos(), "{} < {}", new_last_change_time.as_nanos(), self.last_change_time.as_nanos()); //No time travel please
+                debug_assert!(
+                    new_last_change_time.as_nanos() > self.last_change_time.as_nanos(),
+                    "{} < {}",
+                    new_last_change_time.as_nanos(),
+                    self.last_change_time.as_nanos()
+                ); //No time travel please
                 self.current_state = new_state;
                 self.last_change_time = new_last_change_time;
                 self.changed_since_last_sync = true;

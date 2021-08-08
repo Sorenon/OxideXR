@@ -53,18 +53,18 @@ pub fn read_json<T>(path_str: &str) -> Option<T> where T: DeserializeOwned {
 }
 
 pub fn write_json<T>(value: &T, path: &Path) where T: Serialize {
-    let display = path.display();
+    // let display = path.display();
 
-    if let Some(path) = path.parent() {
-        if let Err(why) = fs::create_dir_all(path) {
-            panic!("couldn't create directory {}: {}", path.display(), why);
-        }
-    }
+    // if let Some(path) = path.parent() {
+    //     if let Err(why) = fs::create_dir_all(path) {
+    //         panic!("couldn't create directory {}: {}", path.display(), why);
+    //     }
+    // }
 
-    match serde_json::to_string_pretty(&value) {
-        Ok(json) => if let Err(why) = fs::write(path, &json) {
-            panic!("couldn't serialize value {}: {}", display, why);
-        },
-        Err(why) => panic!("couldn't write to {}: {}", display, why),
-    }
+    // match serde_json::to_string_pretty(&value) {
+    //     Ok(json) => if let Err(why) = fs::write(path, &json) {
+    //         panic!("couldn't serialize value {}: {}", display, why);
+    //     },
+    //     Err(why) => panic!("couldn't write to {}: {}", display, why),
+    // }
 }
