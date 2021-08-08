@@ -30,7 +30,7 @@ pub struct ActionSpace {
 
 pub struct ActionSpaceBinding {
     pub handle: xr::Space,
-    pub binding: Arc<RwLock<GodState>>,
+    pub binding: GodState,
 }
 
 impl SpaceWrapper {
@@ -63,7 +63,7 @@ impl ActionSpace {
         &self,
         session: &SessionWrapper,
         sync_idx: u64,
-        subaction_bindings: &SubactionCollection<Vec<Arc<RwLock<GodState>>>>,
+        subaction_bindings: &SubactionCollection<Vec<GodState>>,
     ) -> Result<()> {
         let instance = session.instance();
 
@@ -71,9 +71,9 @@ impl ActionSpace {
 
         let mut cur_binding = self.cur_binding.write().unwrap();
         if let Some(cur_binding) = cur_binding.as_ref() {
-            match cur_binding.binding.read().unwrap().action_state {
+            match &cur_binding.binding.action_state {
                 god_actions::GodActionStateEnum::Pose(state) => {
-                    if state.is_active {
+                    if state.read().unwrap().is_active {
                         return Ok(());
                     } else {
                         instance.destroy_space(cur_binding.handle)?;
@@ -88,8 +88,8 @@ impl ActionSpace {
             .unwrap();
 
         let binding = bindings.iter().map(|v| v.iter()).flatten().find(|binding| {
-            match binding.read().unwrap().action_state {
-                god_actions::GodActionStateEnum::Pose(state) => state.is_active,
+            match &binding.action_state {
+                god_actions::GodActionStateEnum::Pose(state) => state.read().unwrap().is_active,
                 _ => panic!("Pose action somehow has non-pose binding"),
             }
         });
@@ -99,7 +99,7 @@ impl ActionSpace {
                 handle: session.create_action_space(&xr::ActionSpaceCreateInfo {
                     ty: xr::ActionSpaceCreateInfo::TYPE,
                     next: ptr::null(),
-                    action: binding.read().unwrap().action.handle,
+                    action: binding.action.handle,
                     subaction_path: self.subaction_path,
                     pose_in_action_space: self.pose_in_action_space,
                 })?,

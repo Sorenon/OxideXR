@@ -94,10 +94,10 @@ pub struct SessionWrapper {
     pub spaces: RwLock<Vec<Arc<SpaceWrapper>>>,
 
     //The cached state of every input path (updated every sync call)
-    pub god_states: HashMap<xr::Path/* interactionProfile */, HashMap<xr::Path /* binding */, Arc<RwLock<GodState>>>>,
+    pub god_states: HashMap<xr::Path/* interactionProfile */, HashMap<xr::Path /* binding */, GodState>>,
 
     //The bindings for each attached input action
-    pub attached_action_sets: OnceCell<HashMap<xr::ActionSet, HashMap<xr::Action, SubactionCollection<Vec<Arc<RwLock<GodState>>>>>>>,
+    pub attached_action_sets: OnceCell<HashMap<xr::ActionSet, HashMap<xr::Action, SubactionCollection<Vec<GodState>>>>>,
 
     //The cached state of the attached application actions (updated every sync call)
     pub cached_action_states: OnceCell<HashMap<xr::Action, RwLock<CachedActionStatesEnum>>>,
@@ -302,12 +302,12 @@ impl SessionWrapper {
     
                         states.insert(
                             instance.string_to_path(&name)?,
-                            Arc::new(RwLock::new(crate::god_actions::GodState {
+                            crate::god_actions::GodState {
                                 action: god_action.clone(),
                                 name,
                                 subaction_path: *subaction_path,
                                 action_state: crate::god_actions::GodActionStateEnum::new(god_action.action_type).unwrap(),
-                            })),
+                            },
                         );
                     }
                 }
@@ -315,7 +315,7 @@ impl SessionWrapper {
     
             let bindings = states.iter().map(|(path, god_state)| {
                 xr::ActionSuggestedBinding {
-                    action: god_state.read().unwrap().action.handle,
+                    action: god_state.action.handle,
                     binding: *path,
                 }
             }).collect::<Vec<_>>();

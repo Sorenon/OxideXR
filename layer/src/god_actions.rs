@@ -195,6 +195,7 @@ pub struct GodAction {
     pub action_type: ActionType,
 }
 
+#[derive(Clone)]
 pub struct GodState {
     pub action: Arc<GodAction>,
     pub name: String,
@@ -219,12 +220,12 @@ pub enum SubactionCollection<T> {
     Subactions(HashMap<xr::Path, T>),
 }
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 pub enum GodActionStateEnum {
-    Boolean(openxr::ActionState<bool>),
-    Float(openxr::ActionState<f32>),
-    Vector2f(openxr::ActionState<Vector2f>),
-    Pose(ActionStatePose),
+    Boolean(Arc<RwLock<openxr::ActionState<bool>>>),
+    Float(Arc<RwLock<openxr::ActionState<f32>>>),
+    Vector2f(Arc<RwLock<openxr::ActionState<Vector2f>>>),
+    Pose(Arc<RwLock<ActionStatePose>>),
 }
 
 impl<T> SubactionCollection<T> {
@@ -290,10 +291,7 @@ impl CachedActionStatesEnum {
         }
     }
 
-    pub fn sync(
-        &mut self,
-        subaction_bindings: &SubactionCollection<Vec<Arc<RwLock<GodState>>>>,
-    ) -> Result<()> {
+    pub fn sync(&mut self, subaction_bindings: &SubactionCollection<Vec<GodState>>) -> Result<()> {
         match self as &mut CachedActionStatesEnum {
             CachedActionStatesEnum::Boolean(states) => {
                 states.update_from_bindings(subaction_bindings);
@@ -350,14 +348,14 @@ impl<T: OxideActionState> CachedActionStates<T> {
 
     pub fn update_from_bindings(
         &mut self,
-        subaction_bindings: &SubactionCollection<Vec<Arc<RwLock<GodState>>>>,
+        subaction_bindings: &SubactionCollection<Vec<GodState>>,
     ) {
         match subaction_bindings {
             SubactionCollection::Singleton(bindings) => {
                 debug_assert!(self.subaction_states.is_none());
 
                 self.main_state
-                    .sync_from_god_states(bindings.iter().map(|a| a.read().unwrap().action_state))
+                    .sync_from_god_states(bindings.iter().map(|a| &a.action_state))
                     .unwrap();
             }
             SubactionCollection::Subactions(bindings_map) => {
@@ -374,19 +372,12 @@ impl<T: OxideActionState> CachedActionStates<T> {
                         })
                 {
                     states
-                        .sync_from_god_states(
-                            bindings.iter().map(|a| a.read().unwrap().action_state),
-                        )
+                        .sync_from_god_states(bindings.iter().map(|a| &a.action_state))
                         .unwrap();
                 }
 
                 self.main_state
-                    .sync_from_god_states(
-                        bindings_map
-                            .values()
-                            .flatten()
-                            .map(|a| a.read().unwrap().action_state),
-                    )
+                    .sync_from_god_states(bindings_map.values().flatten().map(|a| &a.action_state))
                     .unwrap();
             }
         }
@@ -396,50 +387,54 @@ impl<T: OxideActionState> CachedActionStates<T> {
 impl GodActionStateEnum {
     pub fn new(action_type: ActionType) -> Option<GodActionStateEnum> {
         match action_type {
-            ActionType::BooleanInput => {
-                Some(GodActionStateEnum::Boolean(openxr::ActionState::<bool> {
+            ActionType::BooleanInput => Some(GodActionStateEnum::Boolean(Arc::new(RwLock::new(
+                openxr::ActionState::<bool> {
                     current_state: false,
                     changed_since_last_sync: false,
                     last_change_time: xr::Time::from_nanos(0),
                     is_active: false,
-                }))
-            }
-            ActionType::FloatInput => Some(GodActionStateEnum::Float(openxr::ActionState::<f32> {
-                current_state: 0f32,
-                changed_since_last_sync: false,
-                last_change_time: xr::Time::from_nanos(0),
-                is_active: false,
-            })),
-            ActionType::Vector2fInput => Some(GodActionStateEnum::Vector2f(openxr::ActionState::<
-                openxr::Vector2f,
-            > {
-                current_state: openxr::Vector2f::default(),
-                changed_since_last_sync: false,
-                last_change_time: xr::Time::from_nanos(0),
-                is_active: false,
-            })),
-            ActionType::PoseInput => Some(GodActionStateEnum::Pose(ActionStatePose {
-                is_active: false,
-            })),
+                },
+            )))),
+            ActionType::FloatInput => Some(GodActionStateEnum::Float(Arc::new(RwLock::new(
+                openxr::ActionState::<f32> {
+                    current_state: 0f32,
+                    changed_since_last_sync: false,
+                    last_change_time: xr::Time::from_nanos(0),
+                    is_active: false,
+                },
+            )))),
+            ActionType::Vector2fInput => Some(GodActionStateEnum::Vector2f(Arc::new(RwLock::new(
+                openxr::ActionState::<openxr::Vector2f> {
+                    current_state: openxr::Vector2f::default(),
+                    changed_since_last_sync: false,
+                    last_change_time: xr::Time::from_nanos(0),
+                    is_active: false,
+                },
+            )))),
+            ActionType::PoseInput => Some(GodActionStateEnum::Pose(Arc::new(RwLock::new(
+                ActionStatePose { is_active: false },
+            )))),
             _ => None,
         }
     }
 
-    pub fn get_inner<'a>(&'a self) -> &'a dyn OxideActionState {
+    pub fn get_inner<'a>(&'a self) -> &'a RwLock<dyn OxideActionState> {
         match self {
-            GodActionStateEnum::Boolean(inner) => inner,
-            GodActionStateEnum::Float(inner) => inner,
-            GodActionStateEnum::Vector2f(inner) => inner,
-            GodActionStateEnum::Pose(inner) => inner,
+            GodActionStateEnum::Boolean(inner) => inner.as_ref(),
+            GodActionStateEnum::Float(inner) => inner.as_ref(),
+            GodActionStateEnum::Vector2f(inner) => inner.as_ref(),
+            GodActionStateEnum::Pose(inner) => inner.as_ref(),
         }
     }
 }
 
 impl GodState {
-    pub fn sync(&mut self, session: &SessionWrapper) -> Result<()> {
+    pub fn sync(&self, session: &SessionWrapper) -> Result<()> {
         let get_info = self.get_info();
-        let result = match &mut self.action_state {
+        let result = match &self.action_state {
             GodActionStateEnum::Boolean(state) => {
+                let mut state = state.write().unwrap();
+
                 let mut state_xr = xr::ActionStateBoolean::out(ptr::null_mut());
                 let result = session.get_action_state_boolean(&get_info, state_xr.as_mut_ptr());
                 // println!("{}", result);
@@ -458,6 +453,8 @@ impl GodState {
                 }
             }
             GodActionStateEnum::Float(state) => {
+                let mut state = state.write().unwrap();
+
                 let mut state_xr = xr::ActionStateFloat::out(ptr::null_mut());
                 let result = session.get_action_state_float(&get_info, state_xr.as_mut_ptr());
                 if result.into_raw() < 0 {
@@ -474,6 +471,8 @@ impl GodState {
                 }
             }
             GodActionStateEnum::Vector2f(state) => {
+                let mut state = state.write().unwrap();
+
                 let mut state_xr = xr::ActionStateVector2f::out(ptr::null_mut());
                 let result = session.get_action_state_vector2f(&get_info, state_xr.as_mut_ptr());
                 if result.into_raw() < 0 {
@@ -490,6 +489,8 @@ impl GodState {
                 }
             }
             GodActionStateEnum::Pose(state) => {
+                let mut state = state.write().unwrap();
+
                 let mut state_xr = xr::ActionStatePose::out(ptr::null_mut());
                 let result = session.get_action_state_pose(&get_info, state_xr.as_mut_ptr());
                 if result.into_raw() < 0 {
@@ -537,7 +538,7 @@ pub trait OxideActionState {
     /// Float actions - The current state must be the state of the input with the largest absolute value
     ///
     /// Vector2 actions - The current state must be the state of the input with the longest length
-    fn sync_from_god_states<'a, I: Iterator<Item = GodActionStateEnum>>(
+    fn sync_from_god_states<'a, I: Iterator<Item = &'a GodActionStateEnum>>(
         &mut self,
         god_states: I,
     ) -> Result<()>
@@ -551,7 +552,7 @@ pub trait OxideActionState {
 }
 
 impl OxideActionState for openxr::ActionState<bool> {
-    fn sync_from_god_states<'a, I: Iterator<Item = GodActionStateEnum>>(
+    fn sync_from_god_states<'a, I: Iterator<Item = &'a GodActionStateEnum>>(
         &mut self,
         god_states: I,
     ) -> Result<()>
@@ -565,8 +566,10 @@ impl OxideActionState for openxr::ActionState<bool> {
         let mut new_last_change_time = 0;
 
         //The current state must be the result of a boolean OR of all bound inputs
-        for god_state in god_states.filter(|e| e.get_inner().is_active()) {
-            let god_state = god_state.get_inner();
+        for god_state in god_states
+            .map(|e| e.get_inner().read().unwrap())
+            .filter(|e| e.is_active())
+        {
             self.is_active = true;
             if new_last_change_time == 0 {
                 new_last_change_time = god_state.last_change_time()?.as_nanos();
@@ -622,7 +625,7 @@ impl OxideActionState for openxr::ActionState<bool> {
 }
 
 impl OxideActionState for openxr::ActionState<f32> {
-    fn sync_from_god_states<'a, I: Iterator<Item = GodActionStateEnum>>(
+    fn sync_from_god_states<'a, I: Iterator<Item = &'a GodActionStateEnum>>(
         &mut self,
         states: I,
     ) -> Result<()>
@@ -636,8 +639,10 @@ impl OxideActionState for openxr::ActionState<f32> {
         let mut new_last_change_time = xr::Time::from_nanos(0);
 
         //The current state must be the state of the input with the largest absolute value
-        for iter_state in states.filter(|e| e.get_inner().is_active()) {
-            let iter_state = iter_state.get_inner();
+        for iter_state in states
+            .map(|e| e.get_inner().read().unwrap())
+            .filter(|e| e.is_active())
+        {
             self.is_active = true;
             if iter_state.get_scalar()?.abs() >= new_state.abs() {
                 new_state = iter_state.get_scalar()?;
@@ -685,7 +690,7 @@ impl OxideActionState for openxr::ActionState<f32> {
 }
 
 impl OxideActionState for openxr::ActionState<Vector2f> {
-    fn sync_from_god_states<'a, I: Iterator<Item = GodActionStateEnum>>(
+    fn sync_from_god_states<'a, I: Iterator<Item = &'a GodActionStateEnum>>(
         &mut self,
         states: I,
     ) -> Result<()>
@@ -703,15 +708,22 @@ impl OxideActionState for openxr::ActionState<Vector2f> {
         }
 
         //The current state must be the state of the input with the longest length
-        for iter_state in states.filter(|e| e.get_inner().is_active()) {
-            if let GodActionStateEnum::Vector2f(iter_state) = iter_state {
-                self.is_active = true;
-                if len2(iter_state.current_state) >= len2(new_state) {
-                    new_state = iter_state.current_state;
-                    new_last_change_time = iter_state.last_change_time;
+        for iter_state in states.filter_map(|e| {
+            if let GodActionStateEnum::Vector2f(e) = e {
+                let e = e.read().unwrap();
+                if e.is_active {
+                    Some(e)
+                } else {
+                    None
                 }
             } else {
                 panic!();
+            }
+        }) {
+            self.is_active = true;
+            if len2(iter_state.current_state) >= len2(new_state) {
+                new_state = iter_state.current_state;
+                new_last_change_time = iter_state.last_change_time;
             }
         }
 
@@ -748,7 +760,7 @@ impl OxideActionState for openxr::ActionState<Vector2f> {
 }
 
 impl OxideActionState for ActionStatePose {
-    fn sync_from_god_states<'a, I: Iterator<Item = GodActionStateEnum>>(
+    fn sync_from_god_states<'a, I: Iterator<Item = &'a GodActionStateEnum>>(
         &mut self,
         states: I,
     ) -> Result<()>
@@ -756,7 +768,7 @@ impl OxideActionState for ActionStatePose {
         Self: Sized,
     {
         self.is_active = states
-            .filter(|e| e.get_inner().is_active())
+            .filter(|e| e.get_inner().read().unwrap().is_active())
             .next()
             .is_some();
         Ok(())

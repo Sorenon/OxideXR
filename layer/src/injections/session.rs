@@ -108,7 +108,7 @@ pub unsafe extern "system" fn attach_session_action_sets(
                     println!(" {}", instance.path_to_string(*profile_name).unwrap());
                     let states = session.god_states.get(profile_name).unwrap();
                     for binding in bindings {
-                        println!("  {}", &states.get(&binding).unwrap().read().unwrap().name);
+                        println!("  {}", &states.get(&binding).unwrap().name);
                     }
                 }
 
@@ -175,7 +175,7 @@ pub unsafe extern "system" fn sync_actions(
         .flatten()
     {
         //TODO only update the needed god states
-        god_state.write().unwrap().sync(&session).unwrap();
+        god_state.sync(&session).unwrap();
     }
 
     let active_action_sets = std::slice::from_raw_parts(
