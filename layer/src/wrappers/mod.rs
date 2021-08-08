@@ -14,6 +14,7 @@ use std::sync::RwLock;
 use std::sync::Weak;
 use std::sync::Arc;
 
+use crate::god_actions;
 use crate::god_actions::CachedActionStatesEnum;
 use crate::god_actions::GodState;
 use crate::god_actions::SubactionCollection;
@@ -94,10 +95,10 @@ pub struct SessionWrapper {
     pub spaces: RwLock<Vec<Arc<SpaceWrapper>>>,
 
     //The cached state of every input path (updated every sync call)
-    pub god_states: HashMap<xr::Path/* interactionProfile */, HashMap<xr::Path /* binding */, Arc<RwLock<GodState>>>>,
+    pub god_states: HashMap<xr::Path/* interactionProfile */, HashMap<xr::Path /* binding */, Arc<GodState>>>,
 
     //The bindings for each attached input action
-    pub attached_action_sets: OnceCell<HashMap<xr::ActionSet, HashMap<xr::Action, SubactionCollection<Vec<Arc<RwLock<GodState>>>>>>>,
+    pub attached_action_sets: OnceCell<HashMap<xr::ActionSet, HashMap<xr::Action, SubactionCollection<Vec<Arc<GodState>>>>>>,
 
     //The cached state of the attached application actions (updated every sync call)
     pub cached_action_states: OnceCell<HashMap<xr::Action, RwLock<CachedActionStatesEnum>>>,
@@ -302,12 +303,12 @@ impl SessionWrapper {
     
                         states.insert(
                             instance.string_to_path(&name)?,
-                            Arc::new(RwLock::new(crate::god_actions::GodState {
+                            Arc::new(god_actions::GodState {
                                 action: god_action.clone(),
                                 name,
                                 subaction_path: *subaction_path,
-                                action_state: crate::god_actions::GodActionStateEnum::new(god_action.action_type).unwrap(),
-                            })),
+                                action_state: RwLock::new(god_actions::GodActionStateEnum::new(god_action.action_type).unwrap()),
+                            }),
                         );
                     }
                 }
@@ -315,7 +316,7 @@ impl SessionWrapper {
     
             let bindings = states.iter().map(|(path, god_state)| {
                 xr::ActionSuggestedBinding {
-                    action: god_state.read().unwrap().action.handle,
+                    action: god_state.action.handle,
                     binding: *path,
                 }
             }).collect::<Vec<_>>();

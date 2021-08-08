@@ -108,7 +108,7 @@ pub unsafe extern "system" fn attach_session_action_sets(
                     println!(" {}", instance.path_to_string(*profile_name).unwrap());
                     let states = session.god_states.get(profile_name).unwrap();
                     for binding in bindings {
-                        println!("  {}", &states.get(&binding).unwrap().read().unwrap().name);
+                        println!("  {}", &states.get(&binding).unwrap().name);
                     }
                 }
 
@@ -175,7 +175,7 @@ pub unsafe extern "system" fn sync_actions(
         .flatten()
     {
         //TODO only update the needed god states
-        god_state.write().unwrap().sync(&session).unwrap();
+        god_state.sync(&session).unwrap();
     }
 
     let active_action_sets = std::slice::from_raw_parts(
@@ -210,9 +210,7 @@ pub unsafe extern "system" fn sync_actions(
                 return result;
             }
 
-            if let god_actions::CachedActionStatesEnum::Pose(_) =
-                &action_cache_states as &CachedActionStatesEnum
-            {
+            if let god_actions::CachedActionStatesEnum::Pose(_) = action_cache_states.deref() {
                 if let Some(action_spaces) = session.action_spaces.get_mut(action_handle) {
                     for action_space in action_spaces.iter() {
                         if let Err(result) =
@@ -462,7 +460,9 @@ pub unsafe extern "system" fn locate_views(
                 views,
             );
 
-            if result.into_raw() < 0 { return result; }
+            if result.into_raw() < 0 {
+                return result;
+            }
 
             (*view_state).view_state_flags = xr::ViewStateFlags::EMPTY;
             if view_capacity_input != 0 {

@@ -12,6 +12,7 @@ use core::f32;
 use std::cmp;
 use std::collections::HashMap;
 use std::ops::Add;
+use std::ops::Deref;
 use std::ptr;
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -199,7 +200,7 @@ pub struct GodState {
     pub action: Arc<GodAction>,
     pub name: String,
     pub subaction_path: xr::Path,
-    pub action_state: GodActionStateEnum,
+    pub action_state: RwLock<GodActionStateEnum>,
 }
 
 pub enum CachedActionStatesEnum {
@@ -292,7 +293,7 @@ impl CachedActionStatesEnum {
 
     pub fn sync(
         &mut self,
-        subaction_bindings: &SubactionCollection<Vec<Arc<RwLock<GodState>>>>,
+        subaction_bindings: &SubactionCollection<Vec<Arc<GodState>>>,
     ) -> Result<()> {
         match self as &mut CachedActionStatesEnum {
             CachedActionStatesEnum::Boolean(states) => {
@@ -350,14 +351,14 @@ impl<T: OxideActionState> CachedActionStates<T> {
 
     pub fn update_from_bindings(
         &mut self,
-        subaction_bindings: &SubactionCollection<Vec<Arc<RwLock<GodState>>>>,
+        subaction_bindings: &SubactionCollection<Vec<Arc<GodState>>>,
     ) {
         match subaction_bindings {
             SubactionCollection::Singleton(bindings) => {
                 debug_assert!(self.subaction_states.is_none());
 
                 self.main_state
-                    .sync_from_god_states(bindings.iter().map(|a| a.read().unwrap().action_state))
+                    .sync_from_god_states(bindings.iter().map(|a| &a.action_state))
                     .unwrap();
             }
             SubactionCollection::Subactions(bindings_map) => {
@@ -374,19 +375,12 @@ impl<T: OxideActionState> CachedActionStates<T> {
                         })
                 {
                     states
-                        .sync_from_god_states(
-                            bindings.iter().map(|a| a.read().unwrap().action_state),
-                        )
+                        .sync_from_god_states(bindings.iter().map(|a| &a.action_state))
                         .unwrap();
                 }
 
                 self.main_state
-                    .sync_from_god_states(
-                        bindings_map
-                            .values()
-                            .flatten()
-                            .map(|a| a.read().unwrap().action_state),
-                    )
+                    .sync_from_god_states(bindings_map.values().flatten().map(|a| &a.action_state))
                     .unwrap();
             }
         }
@@ -436,9 +430,9 @@ impl GodActionStateEnum {
 }
 
 impl GodState {
-    pub fn sync(&mut self, session: &SessionWrapper) -> Result<()> {
+    pub fn sync(&self, session: &SessionWrapper) -> Result<()> {
         let get_info = self.get_info();
-        let result = match &mut self.action_state {
+        let result = match &mut self.action_state.write().unwrap() as &mut GodActionStateEnum {
             GodActionStateEnum::Boolean(state) => {
                 let mut state_xr = xr::ActionStateBoolean::out(ptr::null_mut());
                 let result = session.get_action_state_boolean(&get_info, state_xr.as_mut_ptr());
@@ -537,7 +531,7 @@ pub trait OxideActionState {
     /// Float actions - The current state must be the state of the input with the largest absolute value
     ///
     /// Vector2 actions - The current state must be the state of the input with the longest length
-    fn sync_from_god_states<'a, I: Iterator<Item = GodActionStateEnum>>(
+    fn sync_from_god_states<'a, I: Iterator<Item = &'a RwLock<GodActionStateEnum>>>(
         &mut self,
         god_states: I,
     ) -> Result<()>
@@ -551,7 +545,7 @@ pub trait OxideActionState {
 }
 
 impl OxideActionState for openxr::ActionState<bool> {
-    fn sync_from_god_states<'a, I: Iterator<Item = GodActionStateEnum>>(
+    fn sync_from_god_states<'a, I: Iterator<Item = &'a RwLock<GodActionStateEnum>>>(
         &mut self,
         god_states: I,
     ) -> Result<()>
@@ -565,7 +559,10 @@ impl OxideActionState for openxr::ActionState<bool> {
         let mut new_last_change_time = 0;
 
         //The current state must be the result of a boolean OR of all bound inputs
-        for god_state in god_states.filter(|e| e.get_inner().is_active()) {
+        for god_state in god_states
+            .map(|e| e.read().unwrap())
+            .filter(|e| e.get_inner().is_active())
+        {
             let god_state = god_state.get_inner();
             self.is_active = true;
             if new_last_change_time == 0 {
@@ -622,7 +619,7 @@ impl OxideActionState for openxr::ActionState<bool> {
 }
 
 impl OxideActionState for openxr::ActionState<f32> {
-    fn sync_from_god_states<'a, I: Iterator<Item = GodActionStateEnum>>(
+    fn sync_from_god_states<'a, I: Iterator<Item = &'a RwLock<GodActionStateEnum>>>(
         &mut self,
         states: I,
     ) -> Result<()>
@@ -636,7 +633,10 @@ impl OxideActionState for openxr::ActionState<f32> {
         let mut new_last_change_time = xr::Time::from_nanos(0);
 
         //The current state must be the state of the input with the largest absolute value
-        for iter_state in states.filter(|e| e.get_inner().is_active()) {
+        for iter_state in states
+            .map(|e| e.read().unwrap())
+            .filter(|e| e.get_inner().is_active())
+        {
             let iter_state = iter_state.get_inner();
             self.is_active = true;
             if iter_state.get_scalar()?.abs() >= new_state.abs() {
@@ -685,7 +685,7 @@ impl OxideActionState for openxr::ActionState<f32> {
 }
 
 impl OxideActionState for openxr::ActionState<Vector2f> {
-    fn sync_from_god_states<'a, I: Iterator<Item = GodActionStateEnum>>(
+    fn sync_from_god_states<'a, I: Iterator<Item = &'a RwLock<GodActionStateEnum>>>(
         &mut self,
         states: I,
     ) -> Result<()>
@@ -703,8 +703,11 @@ impl OxideActionState for openxr::ActionState<Vector2f> {
         }
 
         //The current state must be the state of the input with the longest length
-        for iter_state in states.filter(|e| e.get_inner().is_active()) {
-            if let GodActionStateEnum::Vector2f(iter_state) = iter_state {
+        for iter_state in states
+            .map(|e| e.read().unwrap())
+            .filter(|e| e.get_inner().is_active())
+        {
+            if let GodActionStateEnum::Vector2f(iter_state) = iter_state.deref() {
                 self.is_active = true;
                 if len2(iter_state.current_state) >= len2(new_state) {
                     new_state = iter_state.current_state;
@@ -748,7 +751,7 @@ impl OxideActionState for openxr::ActionState<Vector2f> {
 }
 
 impl OxideActionState for ActionStatePose {
-    fn sync_from_god_states<'a, I: Iterator<Item = GodActionStateEnum>>(
+    fn sync_from_god_states<'a, I: Iterator<Item = &'a RwLock<GodActionStateEnum>>>(
         &mut self,
         states: I,
     ) -> Result<()>
@@ -756,6 +759,7 @@ impl OxideActionState for ActionStatePose {
         Self: Sized,
     {
         self.is_active = states
+            .map(|e| e.read().unwrap())
             .filter(|e| e.get_inner().is_active())
             .next()
             .is_some();
