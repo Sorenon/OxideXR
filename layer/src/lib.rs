@@ -173,6 +173,7 @@ unsafe extern "system" fn instance_proc_addr(instance: xr::Instance, name: *cons
             "xrLocateViews" => std::mem::transmute(injections::session::locate_views as pfn::LocateViews),
             "xrApplyHapticFeedback" => std::mem::transmute(injections::session::apply_haptic_feedback as pfn::ApplyHapticFeedback),
             "xrStopHapticFeedback" => std::mem::transmute(injections::session::stop_haptic_feedback as pfn::StopHapticFeedback),
+            // "xrEnumerateBoundSourcesForAction" => std::mem::transmute(injections::session::enumerate_bound_sources_for_action as pfn::EnumerateBoundSourcesForAction),
 
             //Space methods
             "xrLocateSpace" => std::mem::transmute(injections::space::locate_space as pfn::LocateSpace),

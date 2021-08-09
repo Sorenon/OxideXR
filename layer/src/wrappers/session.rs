@@ -18,7 +18,7 @@ pub struct SessionWrapper {
     pub god_outputs: HashMap<xr::Path/* interactionProfile */, HashMap<xr::Path /* binding */, Arc<GodOutput>>>,
 
     //The bindings for each attached input action
-    pub attached_action_sets: OnceCell<HashMap<xr::ActionSet, HashMap<xr::Action, RwLock<SubactionBindings<GodState>>>>>,
+    pub input_bindings: OnceCell<HashMap<xr::ActionSet, HashMap<xr::Action, RwLock<SubactionBindings<GodState>>>>>,
 
     //The cached state of the attached application actions (updated every sync call)
     pub cached_action_states: OnceCell<HashMap<xr::Action, RwLock<CachedActionStatesEnum>>>,
@@ -42,20 +42,10 @@ impl SessionWrapper {
         };
     
         for (profile_name, god_action_set) in &instance.god_action_sets {
-            let states = match wrapper.god_states.get_mut(profile_name) {
-                Some(states) => states,
-                None => {
-                    wrapper.god_states.insert(*profile_name, HashMap::new());
-                    wrapper.god_states.get_mut(profile_name).unwrap()
-                },
-            };
-            let outputs = match wrapper.god_outputs.get_mut(profile_name) {
-                Some(states) => states,
-                None => {
-                    wrapper.god_outputs.insert(*profile_name, HashMap::new());
-                    wrapper.god_outputs.get_mut(profile_name).unwrap()
-                },
-            };
+            assert!(wrapper.god_states.insert(*profile_name, HashMap::new()).is_none());
+            assert!(wrapper.god_outputs.insert(*profile_name, HashMap::new()).is_none());
+            let states = wrapper.god_states.get_mut(profile_name).unwrap();
+            let outputs = wrapper.god_outputs.get_mut(profile_name).unwrap();
 
             for god_action in god_action_set.god_actions.values() {
                 if god_action.action_type.is_input() {
@@ -102,8 +92,6 @@ impl SessionWrapper {
                     binding: *path,
                 }
             })).collect::<Vec<_>>();
-
-            println!("{}", bindings.len());
     
             let suggested_bindings = xr::InteractionProfileSuggestedBinding {
                 ty: xr::InteractionProfileSuggestedBinding::TYPE,

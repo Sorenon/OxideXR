@@ -98,7 +98,7 @@ pub unsafe extern "system" fn attach_session_action_sets(
         attached_action_sets.insert(action_set.handle, attached_actions);
     }
 
-    if let Err(_) = session.attached_action_sets.set(attached_action_sets) {
+    if let Err(_) = session.input_bindings.set(attached_action_sets) {
         return xr::Result::ERROR_ACTIONSETS_ALREADY_ATTACHED;
     }
     if let Err(_) = session.cached_action_states.set(cached_action_states) {
@@ -166,7 +166,7 @@ pub unsafe extern "system" fn sync_actions(
         (*app_sync_info).active_action_sets,
         (*app_sync_info).count_active_action_sets as usize,
     );
-    let attached_actions = session.attached_action_sets.get().unwrap();
+    let attached_actions = session.input_bindings.get().unwrap();
     let cached_action_states = session.cached_action_states.get().unwrap();
     for active_action_set in active_action_sets {
         if active_action_set.action_set.get_wrapper().is_none() {
@@ -493,14 +493,92 @@ pub unsafe extern "system" fn stop_haptic_feedback(
     match for_each_output_binding(
         session,
         &*haptic_action_info,
-        |session, info| -> Result<xr::Result> {
-            session.stop_haptic_feedback(&info)
-        },
+        |session, info| -> Result<xr::Result> { session.stop_haptic_feedback(&info) },
     ) {
         Ok(result) => result,
         Err(result) => result,
     }
 }
+
+// pub unsafe extern "system" fn enumerate_bound_sources_for_action(
+//     session: xr::Session,
+//     enumerate_info: *const xr::BoundSourcesForActionEnumerateInfo,
+//     source_capacity_input: u32,
+//     source_count_output: *mut u32,
+//     sources: *mut xr::Path,
+// ) -> xr::Result {
+//     let enumerate_info = &*enumerate_info;
+
+//     let session = match session.get_wrapper() {
+//         Some(session) => session,
+//         None => return xr::Result::ERROR_HANDLE_INVALID,
+//     };
+
+//     let action = match enumerate_info.action.get_wrapper() {
+//         Some(action) => action,
+//         None => return xr::Result::ERROR_HANDLE_INVALID,
+//     };
+
+//     if !Weak::ptr_eq(&session.instance, &action.action_set().instance) {
+//         return xr::Result::ERROR_VALIDATION_FAILURE;
+//     }
+
+//     let mut acc = Vec::new();
+//     let instance = session.instance();
+
+//     if ActionType::from_raw(action.action_type).is_input() {
+//         let subaction_bindings = match session.attached_action_sets.get() {
+//             Some(s) => s,
+//             None => return xr::Result::ERROR_ACTIONSET_NOT_ATTACHED,
+//         }
+//         .get(&action.action_set().handle)
+//         .unwrap()
+//         .get(&action.handle)
+//         .unwrap()
+//         .read()
+//         .unwrap();
+
+//         let bindings = match subaction_bindings.deref() {
+//             SubactionBindings::Singleton(vec) => {
+//                 vec.iter().collect::<Vec<_>>()
+//             },
+//             SubactionBindings::Subactions(map) => {
+//                 map.values().map(|v| v.iter()).flatten().collect::<Vec<_>>()
+//             },
+//         };
+
+//         for binding in bindings {
+//             let state = binding.action_state.read().unwrap();
+//             if state.get_inner().is_active() {
+//                 acc.push(instance.string_to_path(&binding.name).unwrap())
+//             }
+//         }
+//     } else {
+//         let subaction_bindings = match session.output_bindings.get().unwrap().get(&action.handle) {
+//             Some(s) => s,
+//             None => return xr::Result::ERROR_ACTIONSET_NOT_ATTACHED,
+//         }
+//         .read()
+//         .unwrap();
+
+//         let bindings = match subaction_bindings.deref() {
+//             SubactionBindings::Singleton(vec) => {
+//                 vec.iter().collect::<Vec<_>>()
+//             },
+//             SubactionBindings::Subactions(map) => {
+//                 map.values().map(|v| v.iter()).flatten().collect::<Vec<_>>()
+//             },
+//         };
+
+//         for binding in bindings {
+//             if state.get_inner().is_active() {
+//                 acc.push(instance.string_to_path(&binding.name).unwrap())
+//             }
+//         }
+//     }
+
+//     xr::Result::SUCCESS
+// }
 
 fn for_each_output_binding<F>(
     session: xr::Session,
@@ -512,6 +590,9 @@ where
 {
     let session = session.try_get_wrapper()?;
     let action = haptic_action_info.action.try_get_wrapper()?;
+    if !Weak::ptr_eq(&session.instance, &action.action_set().instance) {
+        return Err(xr::Result::ERROR_VALIDATION_FAILURE);
+    }
 
     let subaction_bindings = session
         .output_bindings
