@@ -4,6 +4,7 @@ mod injections;
 mod util;
 mod god_actions;
 mod validation;
+mod path;
 
 use wrappers::*;
 use loader_interfaces::*;
@@ -68,32 +69,32 @@ unsafe extern "system" fn create_api_layer_instance(
         Err(result) => return result,
     };
 
-    let caller = match openxr::raw::Instance::load(&entry, *instance) {
+    let core = match openxr::raw::Instance::load(&entry, *instance) {
         Ok(caller) => caller,
         Err(result) => return result,
     };
 
-    // let enabled_ext = std::slice::from_raw_parts(
-    //     (*instance_info).enabled_extension_names,
-    //     (*instance_info).enabled_extension_count as usize,
-    // )
-    // .into_iter()
-    // .map(|ptr| {
-    //     let mut extension_name = [0; xr::MAX_EXTENSION_NAME_SIZE];
-    //     util::place_cstr(&mut extension_name, &CStr::from_ptr(*ptr).to_string_lossy());
-    //     xr::ExtensionProperties {
-    //         ty: xr::ExtensionProperties::TYPE,
-    //         next: std::ptr::null_mut(),
-    //         extension_name,
-    //         extension_version: 0,
-    //     }
-    // })
-    // .collect::<Vec<_>>();
+    let enabled_ext = std::slice::from_raw_parts(
+        (*instance_info).enabled_extension_names,
+        (*instance_info).enabled_extension_count as usize,
+    )
+    .into_iter()
+    .map(|ptr| {
+        let mut extension_name = [0; xr::MAX_EXTENSION_NAME_SIZE];
+        util::place_cstr(&mut extension_name, &CStr::from_ptr(*ptr).to_string_lossy());
+        xr::ExtensionProperties {
+            ty: xr::ExtensionProperties::TYPE,
+            next: std::ptr::null_mut(),
+            extension_name,
+            extension_version: 0,
+        }
+    })
+    .collect::<Vec<_>>();
 
-    // let exts = match openxr::InstanceExtensions::load(&entry, *instance, &openxr::ExtensionSet::from_properties(&enabled_ext)) {
-    //     Ok(caller) => caller,
-    //     Err(result) => return result,
-    // };
+    let exts = match openxr::InstanceExtensions::load(&entry, *instance, &openxr::ExtensionSet::from_properties(&enabled_ext)) {
+        Ok(caller) => caller,
+        Err(result) => return result,
+    };
 
     let mut wrapper = wrappers::InstanceWrapper {
         handle: *instance,
@@ -107,15 +108,11 @@ unsafe extern "system" fn create_api_layer_instance(
         engine_name: i8_arr_to_owned(&application_info.engine_name),
         engine_version: application_info.engine_version,
 
-        core: caller,
+        core,
+        exts,
 
         get_instance_proc_addr_next,
     };
-
-    // let name = wrapper.application_name.clone();
-    // std::thread::spawn(move || {
-    //     std::process::Command::new("C:\\Users\\soren\\Documents\\Programming\\rust\\oxidexr\\target\\debug\\gui.exe").arg(name).output().unwrap();
-    // });
 
     match god_actions::create_god_action_sets(&wrapper) {
         Ok(god_action_sets) => {
@@ -173,6 +170,7 @@ unsafe extern "system" fn instance_proc_addr(instance: xr::Instance, name: *cons
             "xrLocateViews" => std::mem::transmute(injections::session::locate_views as pfn::LocateViews),
             "xrApplyHapticFeedback" => std::mem::transmute(injections::session::apply_haptic_feedback as pfn::ApplyHapticFeedback),
             "xrStopHapticFeedback" => std::mem::transmute(injections::session::stop_haptic_feedback as pfn::StopHapticFeedback),
+            "xrEnumerateBoundSourcesForAction" => std::mem::transmute(injections::session::enumerate_bound_sources_for_action as pfn::EnumerateBoundSourcesForAction),
 
             //Space methods
             "xrLocateSpace" => std::mem::transmute(injections::space::locate_space as pfn::LocateSpace),

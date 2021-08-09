@@ -1,6 +1,7 @@
 pub mod space;
 pub mod session;
 
+use common::xrapplication_info::ActionType;
 use dashmap::DashMap;
 use once_cell::sync::OnceCell;
 use openxr::Result;
@@ -15,11 +16,9 @@ use std::sync::RwLock;
 use std::sync::Weak;
 use std::sync::Arc;
 
-use crate::god_actions;
 use crate::god_actions::CachedActionStatesEnum;
-use crate::god_actions::GodAction;
-use crate::god_actions::GodOutput;
-use crate::god_actions::GodState;
+use crate::god_actions::OutputBinding;
+use crate::god_actions::InputBinding;
 use crate::god_actions::SubactionBindings;
 use crate::util;
 
@@ -95,6 +94,7 @@ pub struct InstanceWrapper {
     pub engine_version: u32,
 
     pub core: openxr::raw::Instance,
+    pub exts: openxr::InstanceExtensions,
 
     pub get_instance_proc_addr_next: pfn::GetInstanceProcAddr,
 }
@@ -116,7 +116,7 @@ pub struct ActionWrapper {
     pub action_set: Weak<ActionSetWrapper>, 
     pub name: String,
 
-    pub action_type: xr::ActionType,
+    pub action_type: ActionType,
     pub subaction_paths: Vec<xr::Path>,
     pub localized_name: String,
 

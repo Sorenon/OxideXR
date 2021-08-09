@@ -10,6 +10,7 @@ use std::sync::RwLock;
 use crate::i8_arr_to_owned;
 use crate::wrappers::*;
 
+use common::xrapplication_info::ActionType;
 use openxr::sys as xr;
 
 pub unsafe extern "system" fn create_session(
@@ -94,7 +95,7 @@ pub unsafe extern "system" fn create_action(
         handle: *action,
         action_set: Arc::downgrade(&action_set),
         name: i8_arr_to_owned(&create_info.action_name),
-        action_type: create_info.action_type,
+        action_type: ActionType::from_raw(create_info.action_type),
         subaction_paths: std::slice::from_raw_parts(
             create_info.subaction_paths,
             create_info.count_subaction_paths as usize,

@@ -30,7 +30,7 @@ pub struct ActionSpace {
 
 pub struct ActionSpaceBinding {
     pub space_handle: xr::Space,
-    pub binding: Arc<GodState>,
+    pub binding: Arc<InputBinding>,
 }
 
 impl SpaceWrapper {
@@ -65,7 +65,7 @@ impl ActionSpace {
         &self,
         session: &SessionWrapper,
         sync_idx: u64,
-        subaction_bindings: &SubactionBindings<GodState>,
+        subaction_bindings: &SubactionBindings<InputBinding>,
     ) -> Result<()> {
         let instance = session.instance();
 
@@ -89,7 +89,7 @@ impl ActionSpace {
             .get_matching(self.subaction_path)
             .unwrap();
 
-        let binding = bindings.iter().map(|v| v.iter()).flatten().find(|binding| {
+        let binding = bindings.iter().find(|binding| {
             match binding.action_state.read().unwrap().deref() {
                 god_actions::GodActionStateEnum::Pose(state) => state.is_active,
                 _ => panic!("Pose action somehow has non-pose binding"),
@@ -105,7 +105,7 @@ impl ActionSpace {
                     subaction_path: self.subaction_path,
                     pose_in_action_space: self.pose_in_action_space,
                 })?,
-                binding: binding.clone(),
+                binding: (*binding).clone(),
             })
         } else {
             *cur_binding = None

@@ -2,8 +2,9 @@ use common::interaction_profiles;
 use common::interaction_profiles::InteractionProfile;
 use common::interaction_profiles::Subpath;
 use common::xrapplication_info::ActionType;
-use openxr::Result;
+use crate::path::*;
 
+use openxr::Result;
 use openxr::builder as xr_builder;
 use openxr::sys as xr;
 use openxr::Vector2f;
@@ -28,7 +29,7 @@ pub fn create_god_action_sets(
     for (profile_name, profile_info) in interaction_profiles::generate().profiles {
         map.insert(
             instance.string_to_path(&profile_name)?,
-            GodActionSet::new(instance, &profile_name, &profile_info)?,
+            GodActionSet::create_set(instance, &profile_name, &profile_info)?,
         );
     }
     Ok(map)
@@ -46,7 +47,7 @@ pub struct GodActionSet {
 }
 
 impl GodActionSet {
-    fn new(
+    fn create_set(
         instance: &InstanceWrapper,
         profile_name: &String,
         profile_info: &InteractionProfile,
@@ -77,6 +78,35 @@ impl GodActionSet {
 
         for (subpath, subpath_info) in &profile_info.subpaths {
             god_set.create_actions_for_subpath(instance, &subpath, &subpath_info)?;
+        }
+
+        let mut bindings = Vec::new();
+
+        for god_action in god_set.god_actions.values() {
+            for subaction_path in &god_action.subaction_paths {
+                let name = instance.path_to_string(*subaction_path)?.add(&god_action.name);
+                bindings.push(xr::ActionSuggestedBinding {
+                    action: god_action.handle,
+                    binding: instance.string_to_path(&name)?,
+                })
+            }
+        }
+
+        let suggested_bindings = xr::InteractionProfileSuggestedBinding {
+            ty: xr::InteractionProfileSuggestedBinding::TYPE,
+            next: ptr::null(),
+            interaction_profile: instance.string_to_path(&profile_name)?,
+            count_suggested_bindings: bindings.len() as u32,
+            suggested_bindings: bindings.as_ptr(),
+        };
+
+        //TODO deal with some system components not existing causing XR_ERROR_PATH_UNSUPPORTED
+        let result = instance.suggest_interaction_profile_bindings(&suggested_bindings);
+        if result.into_raw() < 0 {
+            println!("failed to load profile: {} because '{}'", profile_name, result);
+            // return Err(result);
+        } else {
+            println!("loaded profile: {}", profile_name);
         }
 
         Ok(god_set)
@@ -125,7 +155,7 @@ impl GodActionSet {
                         subaction_paths.clone(),
                         ActionType::Vector2fInput,
                     )?;
-                },
+                }
                 interaction_profiles::Feature::Haptic => {
                     self.create_action(
                         instance,
@@ -184,7 +214,8 @@ impl GodActionSet {
             instance.string_to_path(&name)?,
             Arc::new(GodAction {
                 handle,
-                profile_name: self.name.clone(),
+                profile_name_str: self.name.clone(),
+                profile_name: instance.string_to_path(&self.name)?,
                 name,
                 subaction_paths,
                 action_type,
@@ -197,23 +228,43 @@ impl GodActionSet {
 
 pub struct GodAction {
     pub handle: xr::Action,
-    pub profile_name: String,
+    pub profile_name_str: String,
+    pub profile_name: xr::Path,
     pub name: String,
     pub subaction_paths: Vec<xr::Path>,
     pub action_type: ActionType,
 }
 
-pub struct GodState {
+pub struct InputBinding {
     pub action: Arc<GodAction>,
-    pub name: String,
+    pub binding_str: String,
     pub subaction_path: xr::Path,
     pub action_state: RwLock<GodActionStateEnum>,
 }
 
-pub struct GodOutput {
+pub struct OutputBinding {
     pub action: Arc<GodAction>,
-    pub name: String,
+    pub binding_str: String,
     pub subaction_path: xr::Path,
+}
+
+pub trait Binding {
+    fn is_active(&self, session: &SessionWrapper) -> bool;
+}
+
+impl Binding for InputBinding {
+    fn is_active(&self, _: &SessionWrapper) -> bool {
+        self.action_state.read().unwrap().get_inner().is_active()
+    }
+}
+
+impl Binding for OutputBinding {
+    fn is_active(&self, session: &SessionWrapper) -> bool {
+        session.is_device_active(
+            InteractionProfilePath(self.action.profile_name),
+            TopLevelUserPath(self.subaction_path) as SubactionPath,
+        )
+    }
 }
 
 pub enum CachedActionStatesEnum {
@@ -227,7 +278,10 @@ pub struct CachedActionStates<T: OxideActionState> {
     pub main_state: T,
     pub subaction_states: Option<HashMap<xr::Path, T>>,
 }
-pub enum SubactionBindings<T> {
+pub enum SubactionBindings<T>
+where
+    T: Binding,
+{
     Singleton(Vec<Arc<T>>),
     Subactions(HashMap<xr::Path, Vec<Arc<T>>>),
 }
@@ -240,7 +294,7 @@ pub enum GodActionStateEnum {
     Pose(ActionStatePose),
 }
 
-impl<T> SubactionBindings<T> {
+impl<T: Binding> SubactionBindings<T> {
     pub fn new(
         instance: &InstanceWrapper,
         action: &ActionWrapper,
@@ -286,20 +340,19 @@ impl<T> SubactionBindings<T> {
         }
     }
 
-    //TODO remove vec nesting
-    pub fn get_matching<'a>(&'a self, subaction_path: xr::Path) -> Result<Vec<&'a Vec<Arc<T>>>> {
+    pub fn get_matching<'a>(&'a self, subaction_path: xr::Path) -> Result<Vec<&'a Arc<T>>> {
         if subaction_path == xr::Path::NULL {
             Ok(match self {
-                SubactionBindings::Singleton(state) => {
-                    vec![state]
+                SubactionBindings::Singleton(state) => state.iter().collect(),
+                SubactionBindings::Subactions(state_map) => {
+                    state_map.values().flat_map(|v| v.iter()).collect()
                 }
-                SubactionBindings::Subactions(state_map) => state_map.values().collect::<Vec<_>>(),
             })
         } else {
             match self {
                 SubactionBindings::Singleton(_) => Err(xr::Result::ERROR_PATH_UNSUPPORTED),
                 SubactionBindings::Subactions(state_map) => match state_map.get(&subaction_path) {
-                    Some(state) => Ok(vec![state]),
+                    Some(state) => Ok(state.iter().collect()),
                     None => Err(xr::Result::ERROR_PATH_UNSUPPORTED),
                 },
             }
@@ -345,7 +398,7 @@ impl CachedActionStatesEnum {
         }
     }
 
-    pub fn sync(&mut self, subaction_bindings: &SubactionBindings<GodState>) -> Result<()> {
+    pub fn sync(&mut self, subaction_bindings: &SubactionBindings<InputBinding>) -> Result<()> {
         match self as &mut CachedActionStatesEnum {
             CachedActionStatesEnum::Boolean(states) => {
                 states.update_from_bindings(subaction_bindings);
@@ -400,7 +453,7 @@ impl<T: OxideActionState> CachedActionStates<T> {
         }
     }
 
-    pub fn update_from_bindings(&mut self, subaction_bindings: &SubactionBindings<GodState>) {
+    pub fn update_from_bindings(&mut self, subaction_bindings: &SubactionBindings<InputBinding>) {
         match subaction_bindings {
             SubactionBindings::Singleton(bindings) => {
                 debug_assert!(self.subaction_states.is_none());
@@ -477,7 +530,7 @@ impl GodActionStateEnum {
     }
 }
 
-impl GodState {
+impl InputBinding {
     pub fn sync(&self, session: &SessionWrapper) -> Result<()> {
         let get_info = self.get_info();
         let result = match &mut self.action_state.write().unwrap() as &mut GodActionStateEnum {
