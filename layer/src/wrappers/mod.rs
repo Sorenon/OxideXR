@@ -51,16 +51,6 @@ pub unsafe fn static_init() {
     }
 }
 
-#[allow(invalid_value)]
-unsafe fn _assert_thread_safe() {
-    type T = dyn Send + Sync;
-    let _: &T = &std::mem::zeroed::<InstanceWrapper>();
-    let _: &T = &std::mem::zeroed::<SessionWrapper>();
-    let _: &T = &std::mem::zeroed::<ActionSetWrapper>();
-    let _: &T = &std::mem::zeroed::<ActionWrapper>();
-    let _: &T = &std::mem::zeroed::<SpaceWrapper>();
-}
-
 pub fn instances() -> &'static HandleMap<xr::Instance, InstanceWrapper> {
     INSTANCES.get().unwrap()
 }

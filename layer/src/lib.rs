@@ -13,6 +13,7 @@ use util::*;
 use openxr::sys as xr;
 use openxr::sys::pfn as pfn;
 
+use core::panic;
 use std::os::raw::c_char;
 use std::ffi::CStr;
 use std::sync::Arc;

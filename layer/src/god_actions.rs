@@ -1,12 +1,12 @@
+use crate::path::*;
 use common::interaction_profiles;
 use common::interaction_profiles::InteractionProfile;
 use common::interaction_profiles::Subpath;
 use common::xrapplication_info::ActionType;
-use crate::path::*;
 
-use openxr::Result;
 use openxr::builder as xr_builder;
 use openxr::sys as xr;
+use openxr::Result;
 use openxr::Vector2f;
 
 use core::f32;
@@ -84,7 +84,9 @@ impl GodActionSet {
 
         for god_action in god_set.god_actions.values() {
             for subaction_path in &god_action.subaction_paths {
-                let name = instance.path_to_string(*subaction_path)?.add(&god_action.name);
+                let name = instance
+                    .path_to_string(*subaction_path)?
+                    .add(&god_action.name);
                 bindings.push(xr::ActionSuggestedBinding {
                     action: god_action.handle,
                     binding: instance.string_to_path(&name)?,
@@ -103,7 +105,10 @@ impl GodActionSet {
         //TODO deal with some system components not existing causing XR_ERROR_PATH_UNSUPPORTED
         let result = instance.suggest_interaction_profile_bindings(&suggested_bindings);
         if result.into_raw() < 0 {
-            println!("failed to load profile: {} because '{}'", profile_name, result);
+            println!(
+                "failed to load profile: {} because '{}'",
+                profile_name, result
+            );
             // return Err(result);
         } else {
             println!("loaded profile: {}", profile_name);
@@ -295,48 +300,58 @@ pub enum GodActionStateEnum {
 }
 
 impl<T: Binding> SubactionBindings<T> {
-    pub fn new(
-        instance: &InstanceWrapper,
+    pub fn new(subaction_paths: &Vec<xr::Path>) -> Self {
+        if subaction_paths.is_empty() {
+            SubactionBindings::Singleton(Vec::new())
+        } else {
+            SubactionBindings::Subactions(
+                subaction_paths
+                    .iter()
+                    .map(|subaction_path| (*subaction_path, Vec::new()))
+                    .collect::<HashMap<_, _>>(),
+            )
+        }
+    }
+
+    pub fn set_bindings(
+        &mut self,
         action: &ActionWrapper,
         profile_map: &HashMap<xr::Path, HashMap<xr::Path, Arc<T>>>,
-    ) -> Self {
-        let subaction_paths = &action.subaction_paths;
-        if subaction_paths.is_empty() {
-            let mut vec = Vec::new();
+        bindings: &HashMap<xr::Path, &Vec<String>>
+    ) {
+        let instance = action.action_set().instance();
 
-            for (profile, bindings) in action.bindings.read().unwrap().iter() {
-                let bindings_map = profile_map.get(profile).unwrap();
-                for binding in bindings {
-                    vec.push(bindings_map.get(binding).unwrap().clone());
+        match self {
+            SubactionBindings::Singleton(vec) => {
+                vec.clear();
+                for (profile, bindings) in bindings {
+                    let bindings_map = profile_map.get(profile).unwrap();
+                    for binding_str in *bindings {
+                        vec.push(bindings_map.get(&instance.string_to_path(binding_str).unwrap()).unwrap().clone());
+                    }
                 }
             }
+            SubactionBindings::Subactions(map) => {
+                let subaction_paths = &action.subaction_paths;
 
-            SubactionBindings::Singleton(vec)
-        } else {
-            let mut map = subaction_paths
-                .iter()
-                .map(|subaction_path| (*subaction_path, Vec::new()))
-                .collect::<HashMap<_, _>>();
+                for (profile, bindings) in bindings {
+                    let bindings_map = profile_map.get(profile).unwrap();
+                    for binding_str in *bindings {
+                        let subaction_path = subaction_paths
+                            .iter()
+                            .filter(|subaction_path| {
+                                binding_str
+                                    .starts_with(&instance.path_to_string(**subaction_path).unwrap())
+                            })
+                            .next()
+                            .unwrap();
 
-            for (profile, bindings) in action.bindings.read().unwrap().iter() {
-                let bindings_map = profile_map.get(profile).unwrap();
-                for binding in bindings {
-                    let binding_str = instance.path_to_string(*binding).unwrap();
-                    let subaction_path = subaction_paths
-                        .iter()
-                        .filter(|subaction_path| {
-                            binding_str
-                                .starts_with(&instance.path_to_string(**subaction_path).unwrap())
-                        })
-                        .next()
-                        .unwrap();
-                    let vec = map.get_mut(subaction_path).unwrap();
-                    println!("{}", binding_str);
-                    vec.push(bindings_map.get(binding).unwrap().clone());
+                        let vec = map.get_mut(subaction_path).unwrap();
+                        vec.clear();
+                        vec.push(bindings_map.get(&instance.string_to_path(binding_str).unwrap()).unwrap().clone());
+                    }
                 }
             }
-
-            SubactionBindings::Subactions(map)
         }
     }
 

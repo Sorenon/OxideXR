@@ -10,10 +10,9 @@ use crate::path::*;
 use crate::validation::Validate;
 use crate::wrappers::*;
 use common::serial::get_uuid;
-use common::serial::read_json;
 use common::serial::write_json;
-use common::serial::CONFIG_DIR;
-use common::xrapplication_info::*;
+use common::serial::APPS_DIR;
+use common::{application_bindings, xrapplication_info::*};
 
 use openxr::{sys as xr, Result};
 
@@ -46,28 +45,11 @@ pub unsafe extern "system" fn attach_session_action_sets(
         let mut input_bindings = HashMap::new();
 
         for action in action_set.actions.read().unwrap().iter() {
-            let bindings = action
-                .bindings
-                .read()
-                .unwrap()
-                .iter()
-                .map(|(p, v)| (p.to_owned(), v.to_owned()))
-                .collect::<Vec<_>>();
-
-            println!(
-                "Attaching: {} to session with {} bindings over {} profiles",
-                action.name,
-                bindings.iter().fold(0, |i, (_, vec)| i + vec.len()),
-                bindings.len()
-            );
-
             if action.action_type.is_input() {
                 input_bindings.insert(
                     action.handle,
                     RwLock::new(SubactionBindings::new(
-                        &instance,
-                        &action,
-                        &session.god_states,
+                        &action.subaction_paths,
                     )),
                 );
                 cached_action_states.insert(
@@ -77,31 +59,13 @@ pub unsafe extern "system" fn attach_session_action_sets(
                         &action.subaction_paths,
                     )),
                 );
-
-                for (profile_name, bindings) in action.bindings.read().unwrap().iter() {
-                    println!(" {}", instance.path_to_string(*profile_name).unwrap());
-                    let states = session.god_states.get(profile_name).unwrap();
-                    for binding in bindings {
-                        println!("  {}", &states.get(&binding).unwrap().binding_str);
-                    }
-                }
             } else {
                 output_bindings.insert(
                     action.handle,
                     RwLock::new(SubactionBindings::new(
-                        &instance,
-                        &action,
-                        &session.god_outputs,
+                        &action.subaction_paths,
                     )),
                 );
-
-                for (profile_name, bindings) in action.bindings.read().unwrap().iter() {
-                    println!(" {}", instance.path_to_string(*profile_name).unwrap());
-                    let outputs = session.god_outputs.get(profile_name).unwrap();
-                    for binding in bindings {
-                        println!("  {}", &outputs.get(&binding).unwrap().binding_str);
-                    }
-                }
             }
         }
         input_bindings_sets.insert(action_set.handle, input_bindings);
@@ -116,6 +80,8 @@ pub unsafe extern "system" fn attach_session_action_sets(
     if let Err(_) = session.output_bindings.set(output_bindings) {
         return xr::Result::ERROR_ACTIONSETS_ALREADY_ATTACHED;
     }
+
+    // session.update_bindings(application_bindings)
 
     update_application_actions(&session.instance(), &action_sets);
 
@@ -151,6 +117,15 @@ pub unsafe extern "system" fn sync_actions(
     };
     if result.into_raw() < 0 {
         return result;
+    }
+
+    {
+        let mut lock = session.gui_out.write().unwrap();
+        if let Some(str) = lock.take() {
+            let value =  &serde_json::from_str::<application_bindings::ApplicationBindings>(&str).unwrap();
+            println!("{:?}", &value);
+            session.update_bindings(&value);
+        }
     }
 
     //Update the active profile for each user path TODO: listen to XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED
@@ -569,20 +544,11 @@ where
 fn update_application_actions(instance: &InstanceWrapper, action_set_handles: &[xr::ActionSet]) {
     let path_str = format!(
         "{}{}/actions.json",
-        CONFIG_DIR,
+        APPS_DIR,
         get_uuid(&instance.application_name)
     );
 
-    let mut application_actions = match read_json::<XrApplicationInfo>(&path_str) {
-        Some(application_actions) => {
-            if application_actions.application_name == instance.application_name {
-                application_actions
-            } else {
-                XrApplicationInfo::from_name(&instance.application_name)
-            }
-        }
-        None => XrApplicationInfo::from_name(&instance.application_name),
-    };
+    let mut application_actions = XrApplicationInfo::from_name(&instance.application_name);
 
     for action_set in action_set_handles {
         let action_set_wrapper = ActionSetWrapper::from_handle_panic(action_set.clone());

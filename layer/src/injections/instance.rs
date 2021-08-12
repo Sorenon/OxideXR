@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use common::serial::CONFIG_DIR;
+use common::serial::APPS_DIR;
 use common::application_bindings::*;
 use common::serial::read_json;
 use common::serial::get_uuid;
@@ -42,7 +42,7 @@ pub unsafe extern "system" fn suggest_interaction_profile_bindings(
 }
 
 fn update_default_bindings_file(instance: &InstanceWrapper, suggested_bindings: &[xr::ActionSuggestedBinding], interaction_profile: &str) {
-    let file_path = format!("{}{}/default_bindings.json", CONFIG_DIR, get_uuid(&instance.application_name));
+    let file_path = format!("{}{}/default_bindings.json", APPS_DIR, get_uuid(&instance.application_name));
 
     println!("{}", file_path);
 

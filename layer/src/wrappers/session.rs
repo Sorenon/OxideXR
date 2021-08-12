@@ -1,5 +1,15 @@
+use std::io::BufRead;
+use std::io::BufReader;
+use std::io::Read;
+use std::pin::Pin;
+use std::process::Stdio;
+use std::sync::mpsc::channel;
+use std::sync::mpsc::Receiver;
 use std::sync::Weak;
+use std::thread;
+use std::thread::JoinHandle;
 
+use common::application_bindings::ApplicationBindings;
 use openxr::sys as xr;
 
 use crate::god_actions;
@@ -12,6 +22,9 @@ pub struct SessionWrapper {
     pub handle: xr::Session,
     pub instance: Weak<InstanceWrapper>,
     pub spaces: RwLock<Vec<Arc<SpaceWrapper>>>,
+
+    pub gui_thread: OnceCell<JoinHandle<()>>,
+    pub gui_out: Arc<RwLock<Option<String>>>,
 
     ///Every input binding and its cached state (updated every sync call)
     pub god_states: HashMap<
@@ -52,11 +65,29 @@ impl SessionWrapper {
             ..Default::default()
         };
 
-        
-    // let name = wrapper.application_name.clone();
-    // std::thread::spawn(move || {
-    //     std::process::Command::new("C:\\Users\\soren\\Documents\\Programming\\rust\\oxidexr\\target\\debug\\gui.exe").arg(name).output().unwrap();
-    // });
+        {
+            let app_name = instance.application_name.clone();
+            let out_str = wrapper.gui_out.clone();
+
+            let gui_thread = thread::spawn(move || {
+                let mut proc = std::process::Command::new(
+                    "C:\\Users\\soren\\Documents\\Programming\\rust\\oxidexr\\target\\debug\\gui.exe",
+                )
+                .arg("-app")
+                .arg(app_name)
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap();
+
+                let mut out = BufReader::new(proc.stdout.take().unwrap()).lines();
+
+                while let Some(line) = out.next() {
+                    *out_str.write().unwrap() = Some(line.unwrap().clone());
+                }
+            });
+
+            wrapper.gui_thread.set(gui_thread).unwrap();
+        }
 
         for user_path_str in [
             openxr::USER_HAND_LEFT,
@@ -151,6 +182,36 @@ impl SessionWrapper {
         }
 
         Ok(wrapper)
+    }
+
+    pub fn update_bindings(&self, application_bindings: &ApplicationBindings) {
+        let instance = self.instance();
+        let action_set_wrappers = instance.action_sets.read().unwrap(); //TODO
+        let output_bindings = self.output_bindings.get().unwrap();
+        for (profile_name, profile_bindings) in &application_bindings.profiles {
+            if profile_name == "/interaction_profiles/oculus/touch_controller" {
+                for (action_set_name, action_set_bindings) in &profile_bindings.action_sets {
+                    let action_set_wrapper = action_set_wrappers.iter().find(|wrapper| wrapper.name == *action_set_name).unwrap();
+                    let actions_wrappers = action_set_wrapper.actions.read().unwrap();
+                    let input_bindings = self.input_bindings.get().unwrap().get(&action_set_wrapper.handle).unwrap();
+    
+                    for (action_name, action_bindings) in &action_set_bindings.actions {
+                        let action_wrapper = actions_wrappers.iter().find(|wrapper| wrapper.name == *action_name).unwrap();
+    
+                        let mut binding_map = HashMap::new();
+                        binding_map.insert(instance.string_to_path(profile_name).unwrap(), &action_bindings.bindings);
+                        
+                        if action_wrapper.action_type.is_input() {
+                            let mut s = input_bindings.get(&action_wrapper.handle).unwrap().write().unwrap();
+                            s.set_bindings(&action_wrapper, &self.god_states, &binding_map);
+                        } else {
+                            let mut s = output_bindings.get(&action_wrapper.handle).unwrap().write().unwrap();
+                            s.set_bindings(&action_wrapper, &self.god_outputs, &binding_map);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     pub fn is_device_active(

@@ -2,8 +2,13 @@ use std::{collections::HashMap, fs, path::Path};
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-pub const CONFIG_DIR: &'static str = "xrconfig/";
-pub const APPLICATIONS: &'static str = "xrconfig/applications.json";
+pub const APPS_DIR: &'static str = "apps/";
+pub const APPLICATIONS: &'static str = "apps/apps.json";
+
+pub fn default_root_dir() -> std::path::PathBuf {
+    #[cfg(target_os = "windows")]
+    Path::new(&std::env::var("USERPROFILE").unwrap()).join(&Path::new("AppData/Local/OxideXR"))
+}
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct Applications {
@@ -23,6 +28,7 @@ pub fn get_uuid(application_name: &str) -> String {
             let mut id = uuid::Uuid::new_v4().to_simple().to_string();
 
             while applications.map.contains_key(&id) {
+                println!("bazinga!");
                 id = uuid::Uuid::new_v4().to_simple().to_string();
             }
 
@@ -34,7 +40,7 @@ pub fn get_uuid(application_name: &str) -> String {
 }
 
 pub fn read_json<T>(path_str: &str) -> Option<T> where T: DeserializeOwned {
-    let path = Path::new(&path_str);
+    let path = Path::new(&default_root_dir()).join(Path::new(path_str));
     let display = path.display();
 
     if path.exists() {
@@ -53,18 +59,18 @@ pub fn read_json<T>(path_str: &str) -> Option<T> where T: DeserializeOwned {
 }
 
 pub fn write_json<T>(value: &T, path: &Path) where T: Serialize {
-    // let display = path.display();
+    let path = Path::new(&default_root_dir()).join(path);
 
-    // if let Some(path) = path.parent() {
-    //     if let Err(why) = fs::create_dir_all(path) {
-    //         panic!("couldn't create directory {}: {}", path.display(), why);
-    //     }
-    // }
+    if let Some(path) = path.parent() {
+        if let Err(why) = fs::create_dir_all(path) {
+            panic!("couldn't create directory {}: {}", path.display(), why);
+        }
+    }
 
-    // match serde_json::to_string_pretty(&value) {
-    //     Ok(json) => if let Err(why) = fs::write(path, &json) {
-    //         panic!("couldn't serialize value {}: {}", display, why);
-    //     },
-    //     Err(why) => panic!("couldn't write to {}: {}", display, why),
-    // }
+    match serde_json::to_string_pretty(&value) {
+        Ok(json) => if let Err(why) = fs::write(&path, &json) {
+            panic!("couldn't serialize value {}: {}", path.display(), why);
+        },
+        Err(why) => panic!("couldn't write to {}: {}", path.display(), why),
+    }
 }
